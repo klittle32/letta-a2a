@@ -6,8 +6,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc --noEmit",
+    "integration": "node scripts/integration-a2a.mjs",
     "smoke": "node scripts/smoke-a2a.mjs",
     "test": "bun test",
+    "test:python": "cd services/reference-agent && uv run pytest",
+    "test:protocol": "node scripts/integration-a2a.mjs --protocol-only",
+    "test:integration": "node scripts/integration-a2a.mjs",
     "test:compose": "OPENAI_API_KEY=sk-compose-validation docker compose config --quiet"
   },
   "dependencies": {

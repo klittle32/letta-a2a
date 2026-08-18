@@ -35,7 +35,8 @@ export const A2A_EXTERNAL_TOOL = {
     properties: {
       target: {
         type: "string",
-        description: "Registered A2A agent name, such as agent-a or agent-b",
+        description:
+          "Registered A2A agent name, such as agent-a, agent-b, or reference-agent",
       },
       message: {
         type: "string",

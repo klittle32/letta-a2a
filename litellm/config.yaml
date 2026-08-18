@@ -11,6 +11,12 @@ agents:
       description: "Isolated local Letta Agent B"
       url: "http://bridge:8080/agents/agent-b/"
       protocolVersion: "1.0"
+  - agent_name: reference-agent
+    agent_card_params:
+      name: "Independent Reference Agent"
+      description: "Deterministic non-Letta A2A interoperability fixture"
+      url: "http://reference-agent:8090/"
+      protocolVersion: "1.0"
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

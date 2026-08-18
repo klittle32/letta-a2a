@@ -3,7 +3,11 @@
 import { randomUUID } from "node:crypto";
 
 const target = process.argv[2] ?? "agent-a";
-const defaultPorts = { "agent-a": "4001", "agent-b": "4002" };
+const defaultPorts = {
+  "agent-a": "4001",
+  "agent-b": "4002",
+  "reference-agent": "4003",
+};
 const baseUrl =
   process.env.LITELLM_BASE_URL ??
   `http://127.0.0.1:${defaultPorts[target] ?? "4001"}`;

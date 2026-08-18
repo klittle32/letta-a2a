@@ -105,4 +105,56 @@ describe("loadAgentDefinitions", () => {
       ),
     ).toThrow("agent-b");
   });
+
+  test("preserves valid outbound-only A2A gateway routes", () => {
+    const definitions = loadAgentDefinitions(
+      JSON.stringify([
+        {
+          key: "agent-a",
+          displayName: "Agent A",
+          appServerUrl: "ws://a/ws",
+          appServerToken: "token",
+        },
+      ]),
+    );
+
+    expect(
+      loadGatewayUrls(
+        JSON.stringify({
+          "agent-a": "http://litellm-a:4000",
+          "reference-agent": "http://litellm-reference:4000",
+        }),
+        definitions,
+      ),
+    ).toEqual({
+      "agent-a": "http://litellm-a:4000",
+      "reference-agent": "http://litellm-reference:4000",
+    });
+  });
+
+  test("rejects gateway URLs that could leak the shared credential", () => {
+    const definitions = loadAgentDefinitions(
+      JSON.stringify([
+        {
+          key: "agent-a",
+          displayName: "Agent A",
+          appServerUrl: "ws://a/ws",
+          appServerToken: "token",
+        },
+      ]),
+    );
+
+    expect(() =>
+      loadGatewayUrls(
+        JSON.stringify({ "agent-a": "http://user:secret@litellm-a:4000" }),
+        definitions,
+      ),
+    ).toThrow("credentials");
+    expect(() =>
+      loadGatewayUrls(
+        JSON.stringify({ "agent-a": "http://litellm-a:4000?redirect=elsewhere" }),
+        definitions,
+      ),
+    ).toThrow("query");
+  });
 });

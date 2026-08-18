@@ -84,7 +84,7 @@ services:
       TURN_TIMEOUT_MS: ${TURN_TIMEOUT_MS:-120000}
       MAX_A2A_HOPS: ${MAX_A2A_HOPS:-1}
       LETTA_TEST_MODEL: ${LETTA_TEST_MODEL:-openai/gpt-4.1-nano}
-      A2A_GATEWAY_URLS: '{"agent-a":"http://litellm-a:4000","agent-b":"http://litellm-b:4000"}'
+      A2A_GATEWAY_URLS: '{"agent-a":"http://litellm-a:4000","agent-b":"http://litellm-b:4000","reference-agent":"http://litellm-reference:4000"}'
       A2A_GATEWAY_KEY: ${LITELLM_MASTER_KEY:-sk-a2a-lab-only}
       AGENT_DEFINITIONS: >-
         [{"key":"agent-a","displayName":"Agent A","appServerUrl":"ws://agent-a:4500","appServerToken":"${LETTA_APP_SERVER_TOKEN:-a2a-lab-app-server-token}"},{"key":"agent-b","displayName":"Agent B","appServerUrl":"ws://agent-b:4500","appServerToken":"${LETTA_APP_SERVER_TOKEN:-a2a-lab-app-server-token}"}]
@@ -118,6 +118,35 @@ services:
     <<: *litellm-gateway
     ports:
       - "127.0.0.1:${LITELLM_B_PORT:-4002}:4000"
+
+  reference-agent:
+    build:
+      context: ./services/reference-agent
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      PUBLIC_BASE_URL: http://reference-agent:8090
+    networks: [a2a-lab]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8090/healthz', timeout=2)",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
+  litellm-reference:
+    <<: *litellm-gateway
+    depends_on:
+      reference-agent:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${LITELLM_REFERENCE_PORT:-4003}:4000"
 
 networks:
   a2a-lab:

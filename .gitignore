@@ -1,7 +1,10 @@
 .env
 .letta/
 .DS_Store
-node_modules/
+node_modules
+.venv
+__pycache__/
+.pytest_cache/
 dist/
 coverage/
 *.log

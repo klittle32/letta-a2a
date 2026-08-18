@@ -93,17 +93,43 @@ export function loadGatewayUrls(
   }
 
   const record = parsed as Record<string, unknown>;
-  return Object.fromEntries(
-    definitions.map((definition) => {
-      const value = record[definition.key];
-      if (typeof value !== "string" || !/^https?:\/\//.test(value)) {
-        throw new Error(
-          `A2A_GATEWAY_URLS must include an HTTP URL for ${definition.key}`,
-        );
-      }
-      return [definition.key, value.replace(/\/$/, "")];
-    }),
-  );
+  const normalized: GatewayUrls = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (!AGENT_KEY_PATTERN.test(key)) {
+      throw new Error(`A2A_GATEWAY_URLS contains an invalid agent key: ${key}`);
+    }
+    if (typeof value !== "string") {
+      throw new Error(`A2A_GATEWAY_URLS must include an HTTP URL for ${key}`);
+    }
+    const trimmedValue = value.trim();
+    if (!trimmedValue) {
+      throw new Error(`A2A_GATEWAY_URLS must include an HTTP URL for ${key}`);
+    }
+    let gatewayUrl: URL;
+    try {
+      gatewayUrl = new URL(trimmedValue);
+    } catch {
+      throw new Error(`A2A_GATEWAY_URLS must include an HTTP URL for ${key}`);
+    }
+    if (gatewayUrl.protocol !== "http:" && gatewayUrl.protocol !== "https:") {
+      throw new Error(`A2A_GATEWAY_URLS must include an HTTP URL for ${key}`);
+    }
+    if (gatewayUrl.username || gatewayUrl.password) {
+      throw new Error(`A2A_GATEWAY_URLS must not embed credentials for ${key}`);
+    }
+    if (gatewayUrl.search || gatewayUrl.hash) {
+      throw new Error(`A2A_GATEWAY_URLS must not include a query or fragment for ${key}`);
+    }
+    normalized[key] = trimmedValue.replace(/\/$/, "");
+  }
+  for (const definition of definitions) {
+    if (!normalized[definition.key]) {
+      throw new Error(
+        `A2A_GATEWAY_URLS must include an HTTP URL for ${definition.key}`,
+      );
+    }
+  }
+  return normalized;
 }
 
 function requiredString(value: unknown, label: string): string {
