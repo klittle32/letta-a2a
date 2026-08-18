@@ -1,0 +1,16 @@
+agents:
+  - agent_name: agent-a
+    agent_card_params:
+      name: "Agent A"
+      description: "Isolated local Letta Agent A"
+      url: "http://bridge:8080/agents/agent-a/"
+      protocolVersion: "1.0"
+  - agent_name: agent-b
+    agent_card_params:
+      name: "Agent B"
+      description: "Isolated local Letta Agent B"
+      url: "http://bridge:8080/agents/agent-b/"
+      protocolVersion: "1.0"
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

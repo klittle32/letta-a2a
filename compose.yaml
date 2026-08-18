@@ -1,0 +1,131 @@
+name: letta-a2a-lab
+
+x-letta-runtime: &letta-runtime
+  image: ghcr.io/letta-ai/letta-code:0.30.25
+  restart: unless-stopped
+  entrypoint: ["/bin/sh", "-c"]
+  command:
+    - |
+      set -eu
+      mkdir -p /run/letta /workspace
+      umask 077
+      printf '%s\n' "$${LETTA_APP_SERVER_TOKEN}" > /run/letta/app-server-token
+      exec letta server \
+        --backend local \
+        --listen ws://0.0.0.0:4500 \
+        --ws-auth capability-token \
+        --ws-token-file /run/letta/app-server-token
+  environment: &letta-environment
+    OPENAI_API_KEY: ${OPENAI_API_KEY:?Set OPENAI_API_KEY in .env}
+    LETTA_APP_SERVER_TOKEN: ${LETTA_APP_SERVER_TOKEN:-a2a-lab-app-server-token}
+  networks: [a2a-lab]
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "node",
+        "-e",
+        "fetch('http://127.0.0.1:4500/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+      ]
+    interval: 5s
+    timeout: 3s
+    retries: 20
+    start_period: 10s
+
+x-litellm-gateway: &litellm-gateway
+  image: ghcr.io/berriai/litellm@sha256:468c25f35f3e5ec4e414974f00deab93337b1b4d9953cabcfd3722e59415f834
+  restart: unless-stopped
+  command: ["--config", "/app/config.yaml", "--port", "4000"]
+  environment:
+    LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-a2a-lab-only}
+  volumes:
+    - ./litellm/config.yaml:/app/config.yaml:ro
+  networks: [a2a-lab]
+  depends_on:
+    bridge:
+      condition: service_healthy
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "python",
+        "-c",
+        "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=2)",
+      ]
+    interval: 5s
+    timeout: 3s
+    retries: 20
+    start_period: 10s
+
+services:
+  agent-a:
+    <<: *letta-runtime
+    hostname: agent-a
+    volumes:
+      - agent-a-state:/root/.letta
+      - agent-a-workspace:/workspace
+
+  agent-b:
+    <<: *letta-runtime
+    hostname: agent-b
+    volumes:
+      - agent-b-state:/root/.letta
+      - agent-b-workspace:/workspace
+
+  bridge:
+    build:
+      context: .
+      dockerfile: services/bridge/Dockerfile
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      BRIDGE_PUBLIC_BASE_URL: http://bridge:8080
+      CONTEXT_STORE_PATH: /data/contexts.json
+      TURN_TIMEOUT_MS: ${TURN_TIMEOUT_MS:-120000}
+      MAX_A2A_HOPS: ${MAX_A2A_HOPS:-1}
+      LETTA_TEST_MODEL: ${LETTA_TEST_MODEL:-openai/gpt-4.1-nano}
+      A2A_GATEWAY_URLS: '{"agent-a":"http://litellm-a:4000","agent-b":"http://litellm-b:4000"}'
+      A2A_GATEWAY_KEY: ${LITELLM_MASTER_KEY:-sk-a2a-lab-only}
+      AGENT_DEFINITIONS: >-
+        [{"key":"agent-a","displayName":"Agent A","appServerUrl":"ws://agent-a:4500","appServerToken":"${LETTA_APP_SERVER_TOKEN:-a2a-lab-app-server-token}"},{"key":"agent-b","displayName":"Agent B","appServerUrl":"ws://agent-b:4500","appServerToken":"${LETTA_APP_SERVER_TOKEN:-a2a-lab-app-server-token}"}]
+    volumes:
+      - bridge-state:/data
+    networks: [a2a-lab]
+    depends_on:
+      agent-a:
+        condition: service_healthy
+      agent-b:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  litellm-a:
+    <<: *litellm-gateway
+    ports:
+      - "127.0.0.1:${LITELLM_A_PORT:-4001}:4000"
+
+  litellm-b:
+    <<: *litellm-gateway
+    ports:
+      - "127.0.0.1:${LITELLM_B_PORT:-4002}:4000"
+
+networks:
+  a2a-lab:
+    driver: bridge
+
+volumes:
+  agent-a-state:
+  agent-a-workspace:
+  agent-b-state:
+  agent-b-workspace:
+  bridge-state:
