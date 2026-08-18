@@ -4,6 +4,8 @@ An isolated Agent2Agent Protocol playground containing two persistent local Lett
 
 Nothing in this stack connects to the production LiteLLM deployment. The only external dependency is the test model provider called by each local Letta runtime.
 
+The completed proof, limits, and observable demo are summarized in [`docs/CONCLUSIONS.md`](docs/CONCLUSIONS.md).
+
 ## Architecture
 
 ```text
