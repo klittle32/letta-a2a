@@ -150,7 +150,71 @@ async function runChecks() {
       `unexpected Letta delegation result: ${delegated.text}`,
     );
     passed("provider-backed Letta Agent A to independent reference agent");
+
+    const priorSlowTask = await reference.sendAndPoll("last-slow");
+    const outer = await agentA.send(
+      "Use a2a_invoke now with target reference-agent and message 'slow 30'. Wait for its result. Do not answer without using the tool.",
+    );
+    const childTaskId = await waitForReferenceObservation(
+      "last-slow",
+      (value) => value !== "(none)" && value !== priorSlowTask.text,
+    );
+
+    const outerCanceled = taskFromPayload(
+      await agentA.rpc("CancelTask", { id: outer.id }),
+    );
+    assert(outerCanceled, "outer CancelTask returned no task");
+    assert(
+      taskState(outerCanceled).endsWith("CANCELED"),
+      `outer cancel ended as ${taskState(outerCanceled)}`,
+    );
+    await waitForReferenceObservation(
+      "last-canceled",
+      (value) => value === childTaskId,
+    );
+
+    const childCanceled = taskFromPayload(
+      await reference.rpc("GetTask", { id: childTaskId }),
+    );
+    assert(childCanceled, "remote child task disappeared after outer cancellation");
+    assert(
+      taskState(childCanceled).endsWith("CANCELED"),
+      `remote child ended as ${taskState(childCanceled)}`,
+    );
+
+    await sleep(500);
+    const stableOuter = taskFromPayload(
+      await agentA.rpc("GetTask", { id: outer.id }),
+    );
+    const stableChild = taskFromPayload(
+      await reference.rpc("GetTask", { id: childTaskId }),
+    );
+    assert(
+      stableOuter && taskState(stableOuter).endsWith("CANCELED"),
+      `outer task did not remain canceled: ${taskState(stableOuter)}`,
+    );
+    assert(
+      stableChild && taskState(stableChild).endsWith("CANCELED"),
+      `remote child did not remain canceled: ${taskState(stableChild)}`,
+    );
+    passed("outer cancellation propagates to the remote child task");
   }
+}
+
+async function waitForReferenceObservation(command, predicate) {
+  const deadline = Date.now() + 60_000;
+  let lastValue = "";
+  while (Date.now() < deadline) {
+    const observation = await reference.sendAndPoll(command);
+    lastValue = observation.text;
+    if (observation.state.endsWith("COMPLETED") && predicate(lastValue)) {
+      return lastValue;
+    }
+    await sleep(100);
+  }
+  throw new Error(
+    `timed out waiting for reference observation ${command}; last value: ${lastValue}`,
+  );
 }
 
 function createClient(baseUrl, target) {

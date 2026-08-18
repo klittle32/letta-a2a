@@ -115,7 +115,7 @@ Run the full live suite, including a provider-backed Letta tool-use turn:
 bun run test:integration
 ```
 
-Each invocation uses a unique Compose project and dynamically allocated loopback ports, then removes its containers and volumes. The protocol matrix deterministically proves reference-agent discovery, asynchronous `SendMessage`/`GetTask`, context continuation, terminal failure, and cancellation stability. The full suite adds a live Letta Agent A → reference-agent smoke test, so it also requires a working provider credential and remains subject to provider and model availability. The ordinary lab can remain running. Set `A2A_INTEGRATION_NO_MANAGE=1` to run the same assertions against an already-running lab on ports `4001` and `4003`.
+Each invocation uses a unique Compose project and dynamically allocated loopback ports, then removes its containers and volumes. The protocol matrix deterministically proves reference-agent discovery, asynchronous `SendMessage`/`GetTask`, context continuation, terminal failure, and cancellation stability. The full suite adds live Letta Agent A → reference-agent delegation and proves that canceling the outer Letta task cancels its active remote child task. It therefore requires a working provider credential and remains subject to provider and model availability. The ordinary lab can remain running. Set `A2A_INTEGRATION_NO_MANAGE=1` to run the same assertions against an already-running lab on ports `4001` and `4003`.
 
 ## Persistence and reset
 
@@ -148,6 +148,7 @@ The reset command permanently deletes both local agents, all lab conversations, 
 - Push notifications, file parts, authenticated upstream Agent Cards, and production multi-tenant caller identity are intentionally deferred.
 - Each conversation permits one active Letta turn. Concurrent messages to one A2A context are serialized.
 - Delegation is opt-in per turn: the request must explicitly mention `a2a_invoke`. Nested calls carry a hop count, and `MAX_A2A_HOPS=1` prevents accidental agent ping-pong loops. The caller-supplied hop metadata is a loop guard, not an authentication boundary.
+- Canceling an outer Letta task aborts active outbound A2A polling, sends a bounded best-effort `CancelTask` to an accepted remote child, and then aborts the local App Server turn. Tasks canceled while waiting on a conversation lock never start a Letta runtime.
 - Letta turns run in `unrestricted` permission mode because the headless App Server has no human approval channel. The per-turn allowlist is empty for ordinary calls and contains only the scoped, controller-owned `a2a_invoke` tool for explicit delegation requests.
 - Default credentials are fixed lab-only values and both gateway ports bind to loopback. Do not reuse this Compose file unchanged for a shared or production environment.
 

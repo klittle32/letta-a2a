@@ -57,6 +57,7 @@ export class LettaAgentExecutor implements AgentExecutor {
       }),
     );
 
+    let response: string;
     try {
       const text = extractMessageText(userMessage).trim();
       if (!text) throw new Error("A2A message must contain a text part");
@@ -65,41 +66,18 @@ export class LettaAgentExecutor implements AgentExecutor {
         requestContext.request.configuration?.returnImmediately === true,
       );
 
-      const response = await this.runtime.runTurn({
+      response = await this.runtime.runTurn({
         a2aContextId: contextId,
         a2aTaskId: taskId,
         messageId: userMessage.messageId,
         text,
         hop: extractA2AHop(requestContext.request.metadata),
       });
-
-      eventBus.publish(
-        AgentEvent.artifactUpdate({
-          taskId,
-          contextId,
-          artifact: {
-            artifactId: randomUUID(),
-            name: "Letta response",
-            description: "Final text returned by the delegated Letta turn.",
-            parts: [
-              {
-                content: { $case: "text", value: response },
-                metadata: undefined,
-                filename: "",
-                mediaType: "text/plain",
-              },
-            ],
-            metadata: undefined,
-            extensions: [],
-          },
-          append: false,
-          lastChunk: true,
-          metadata: {},
-        }),
-      );
-      this.publishTerminal(eventBus, taskId, contextId, TaskState.TASK_STATE_COMPLETED);
     } catch (error) {
-      if (error instanceof LettaTurnCancelledError) {
+      const requested =
+        error instanceof LettaTurnCancelledError ? "canceled" : "failed";
+      const outcome = this.runtime.claimTerminal(taskId, requested);
+      if (outcome === "canceled") {
         this.publishTerminal(eventBus, taskId, contextId, TaskState.TASK_STATE_CANCELED);
         return;
       }
@@ -133,7 +111,53 @@ export class LettaAgentExecutor implements AgentExecutor {
           metadata: {},
         }),
       );
+      return;
     }
+
+    // There is intentionally no await between claiming the terminal outcome
+    // and publishing it. Cancellation and completion therefore have one
+    // run-to-completion winner on the JavaScript event loop.
+    const outcome = this.runtime.claimTerminal(taskId, "completed");
+    if (outcome === "canceled") {
+      this.publishTerminal(
+        eventBus,
+        taskId,
+        contextId,
+        TaskState.TASK_STATE_CANCELED,
+      );
+      return;
+    }
+
+    eventBus.publish(
+      AgentEvent.artifactUpdate({
+        taskId,
+        contextId,
+        artifact: {
+          artifactId: randomUUID(),
+          name: "Letta response",
+          description: "Final text returned by the delegated Letta turn.",
+          parts: [
+            {
+              content: { $case: "text", value: response },
+              metadata: undefined,
+              filename: "",
+              mediaType: "text/plain",
+            },
+          ],
+          metadata: undefined,
+          extensions: [],
+        },
+        append: false,
+        lastChunk: true,
+        metadata: {},
+      }),
+    );
+    this.publishTerminal(
+      eventBus,
+      taskId,
+      contextId,
+      TaskState.TASK_STATE_COMPLETED,
+    );
   }
 
   async cancelTask(

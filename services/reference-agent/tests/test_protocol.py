@@ -111,8 +111,19 @@ def test_canceled_task_remains_terminal_after_original_deadline() -> None:
             base_url="http://testserver",
         ) as client:
             slow = await send(client, "slow 0.1")
+            observed_slow = await wait_for_terminal(
+                client,
+                await send(client, "last-slow"),
+            )
+            assert observed_slow["artifacts"][0]["parts"][0]["text"] == slow["id"]  # type: ignore[index]
+
             canceled = task_from(await rpc(client, "CancelTask", {"id": slow["id"]}))
             assert canceled["status"]["state"] == "TASK_STATE_CANCELED"  # type: ignore[index]
+            observed_cancel = await wait_for_terminal(
+                client,
+                await send(client, "last-canceled"),
+            )
+            assert observed_cancel["artifacts"][0]["parts"][0]["text"] == slow["id"]  # type: ignore[index]
 
             await asyncio.sleep(0.15)
             stable = task_from(await rpc(client, "GetTask", {"id": slow["id"]}))

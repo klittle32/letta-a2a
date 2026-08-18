@@ -9,14 +9,17 @@ import { ContextStore } from "./context-store.js";
 import { extractLettaAssistantText } from "./mapping.js";
 import {
   A2A_EXTERNAL_TOOL,
+  A2AInvocationCancelledError,
   invokeA2A,
 } from "./a2a-client.js";
 import { shouldExposeDelegationTool } from "./delegation-policy.js";
 
 interface ActiveTurn {
-  runtime: RuntimeScope;
+  runtime?: RuntimeScope;
   cancelled: boolean;
   hop: number;
+  abortController: AbortController;
+  outboundInvocations: Set<Promise<unknown>>;
 }
 
 interface RuntimeScope {
@@ -31,10 +34,13 @@ export class LettaTurnCancelledError extends Error {
   }
 }
 
+export type TurnTerminalOutcome = "completed" | "failed" | "canceled";
+
 export class LettaRuntime {
   private client?: AppServerClient;
   private agentId?: string;
   private readonly activeTurns = new Map<string, ActiveTurn>();
+  private readonly terminalClaims = new Map<string, TurnTerminalOutcome>();
   private readonly conversationTails = new Map<string, Promise<void>>();
 
   constructor(
@@ -70,16 +76,20 @@ export class LettaRuntime {
       }
 
       try {
-        const activeTurn = [...this.activeTurns.values()].find((turn) =>
-          sameRuntime(turn.runtime, request.runtime),
+        const activeTurn = [...this.activeTurns.values()].find(
+          (turn) =>
+            turn.runtime && sameRuntime(turn.runtime, request.runtime),
         );
+        if (!activeTurn) {
+          throw new Error("No active Letta turn owns this external tool call");
+        }
         const target = String(request.input.target ?? "");
         const gatewayUrl = this.a2aGatewayUrls[target];
         if (!gatewayUrl) throw new Error(`No A2A gateway route for ${target}`);
         console.log(
           `[${this.definition.key}] invoking ${target} through ${gatewayUrl}`,
         );
-        const result = await invokeA2A(
+        const invocation = invokeA2A(
           {
             target,
             message: String(request.input.message ?? ""),
@@ -87,19 +97,31 @@ export class LettaRuntime {
               typeof request.input.context_id === "string"
                 ? request.input.context_id
                 : undefined,
-            hop: (activeTurn?.hop ?? 0) + 1,
+            hop: activeTurn.hop + 1,
           },
           { gatewayUrl, gatewayKey: this.a2aGatewayKey },
+          fetch,
+          activeTurn.abortController.signal,
         );
-        console.log(`[${this.definition.key}] received A2A result from ${target}`);
-        return {
-          content: [{ type: "text", text: JSON.stringify(result) }],
-        };
+        activeTurn.outboundInvocations.add(invocation);
+        try {
+          const result = await invocation;
+          console.log(`[${this.definition.key}] received A2A result from ${target}`);
+          return {
+            content: [{ type: "text", text: JSON.stringify(result) }],
+          };
+        } finally {
+          activeTurn.outboundInvocations.delete(invocation);
+        }
       } catch (error) {
-        console.error(
-          `[${this.definition.key}] A2A invocation failed:`,
-          error,
-        );
+        if (error instanceof A2AInvocationCancelledError) {
+          console.log(`[${this.definition.key}] A2A invocation cancelled`);
+        } else {
+          console.error(
+            `[${this.definition.key}] A2A invocation failed:`,
+            error,
+          );
+        }
         return {
           content: [
             {
@@ -115,6 +137,10 @@ export class LettaRuntime {
   }
 
   close(): void {
+    for (const active of this.activeTurns.values()) {
+      active.cancelled = true;
+      active.abortController.abort();
+    }
     this.client?.close();
   }
 
@@ -125,25 +151,61 @@ export class LettaRuntime {
     text: string;
     hop: number;
   }): Promise<string> {
-    return this.withConversationLock(options.a2aContextId, () =>
-      this.runTurnUnlocked(options),
+    const active: ActiveTurn = {
+      cancelled: false,
+      hop: options.hop,
+      abortController: new AbortController(),
+      outboundInvocations: new Set(),
+    };
+    this.activeTurns.set(options.a2aTaskId, active);
+    return this.withConversationLock(
+      options.a2aContextId,
+      async () => {
+        if (active.cancelled) throw new LettaTurnCancelledError();
+        return this.runTurnUnlocked(options, active);
+      },
+      active.abortController.signal,
     );
   }
 
   async cancelTask(taskId: string): Promise<void> {
     const active = this.activeTurns.get(taskId);
-    if (!active || !this.client) return;
+    if (!active) return;
     active.cancelled = true;
-    await this.client.abort({ runtime: active.runtime });
+    const outboundInvocations = [...active.outboundInvocations];
+    active.abortController.abort();
+
+    const pending: Promise<unknown>[] = [...outboundInvocations];
+    if (active.runtime && this.client) {
+      pending.push(this.client.abort({ runtime: active.runtime }));
+    }
+    await Promise.allSettled(pending);
   }
 
-  private async runTurnUnlocked(options: {
-    a2aContextId: string;
-    a2aTaskId: string;
-    messageId: string;
-    text: string;
-    hop: number;
-  }): Promise<string> {
+  claimTerminal(
+    taskId: string,
+    requested: TurnTerminalOutcome,
+  ): TurnTerminalOutcome {
+    const existing = this.terminalClaims.get(taskId);
+    if (existing) return existing;
+
+    const active = this.activeTurns.get(taskId);
+    const outcome = active?.cancelled ? "canceled" : requested;
+    this.terminalClaims.set(taskId, outcome);
+    if (active) this.activeTurns.delete(taskId);
+    return outcome;
+  }
+
+  private async runTurnUnlocked(
+    options: {
+      a2aContextId: string;
+      a2aTaskId: string;
+      messageId: string;
+      text: string;
+      hop: number;
+    },
+    active: ActiveTurn,
+  ): Promise<string> {
     const client = this.requiredClient();
     const agentId = this.requiredAgentId();
     const existingConversationId = this.contextStore.get(
@@ -156,46 +218,77 @@ export class LettaRuntime {
       options.hop,
       this.maximumA2AHops,
     );
-    const started = await client.runtimeStart({
-      agent_id: agentId,
-      ...(existingConversationId
-        ? { conversation_id: existingConversationId }
-        : { create_conversation: { body: {} } }),
-      cwd: "/workspace",
-      // The controller exposes at most one scoped external tool on this
-      // isolated runtime, so no human approval round-trip is available here.
-      mode: "unrestricted",
-      client_info: {
-        name: "letta-a2a-bridge",
-        title: "Letta A2A Bridge",
-        version: "0.1.0",
-      },
-      recover_approvals: false,
-      force_device_status: false,
-      external_tools: [
-        { scope_id: "a2a-lab-delegation", tools: [A2A_EXTERNAL_TOOL] },
-      ],
-    });
+    let started;
+    try {
+      started = await client.runtimeStart({
+        agent_id: agentId,
+        ...(existingConversationId
+          ? { conversation_id: existingConversationId }
+          : { create_conversation: { body: {} } }),
+        cwd: "/workspace",
+        // The controller exposes at most one scoped external tool on this
+        // isolated runtime, so no human approval round-trip is available here.
+        mode: "unrestricted",
+        client_info: {
+          name: "letta-a2a-bridge",
+          title: "Letta A2A Bridge",
+          version: "0.1.0",
+        },
+        recover_approvals: false,
+        force_device_status: false,
+        external_tools: [
+          { scope_id: "a2a-lab-delegation", tools: [A2A_EXTERNAL_TOOL] },
+        ],
+      });
+    } catch (error) {
+      if (active.cancelled) throw new LettaTurnCancelledError();
+      throw error;
+    }
 
     if (!started.success || !started.runtime) {
+      if (active.cancelled) throw new LettaTurnCancelledError();
       throw new Error(started.error ?? "failed to start Letta runtime");
     }
     const runtime = started.runtime;
-
-    const active: ActiveTurn = { runtime, cancelled: false, hop: options.hop };
-    this.activeTurns.set(options.a2aTaskId, active);
+    active.runtime = runtime;
 
     try {
       return await new Promise<string>((resolve, reject) => {
         let assistantText = "";
         let settled = false;
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        let cancellationDrainTimeout:
+          | ReturnType<typeof setTimeout>
+          | undefined;
 
         const finish = (callback: () => void) => {
           if (settled) return;
           settled = true;
-          clearTimeout(timeout);
+          if (timeout) clearTimeout(timeout);
+          if (cancellationDrainTimeout) {
+            clearTimeout(cancellationDrainTimeout);
+          }
+          active.abortController.signal.removeEventListener(
+            "abort",
+            beginCancellationDrain,
+          );
           disposeMessageHandler();
           callback();
+        };
+
+        const beginCancellationDrain = () => {
+          if (
+            settled ||
+            !active.cancelled ||
+            cancellationDrainTimeout
+          ) {
+            return;
+          }
+          if (timeout) clearTimeout(timeout);
+          cancellationDrainTimeout = setTimeout(
+            () => finish(() => reject(new LettaTurnCancelledError())),
+            Math.min(5_000, Math.max(100, this.turnTimeoutMs)),
+          );
         };
 
         const disposeMessageHandler = client.onMessage((message) => {
@@ -208,7 +301,13 @@ export class LettaRuntime {
               message.delta.message_type === "loop_error" &&
               message.delta.is_terminal
             ) {
-              finish(() => reject(new Error(message.delta.message)));
+              if (active.cancelled) {
+                beginCancellationDrain();
+                return;
+              }
+              finish(() =>
+                reject(new Error(message.delta.message)),
+              );
             }
             return;
           }
@@ -224,8 +323,14 @@ export class LettaRuntime {
           }
         });
 
-        const timeout = setTimeout(() => {
-          active.cancelled = true;
+        active.abortController.signal.addEventListener(
+          "abort",
+          beginCancellationDrain,
+          { once: true },
+        );
+
+        timeout = setTimeout(() => {
+          active.abortController.abort();
           void client.abort({ runtime }).catch(() => undefined);
           finish(() =>
             reject(
@@ -235,6 +340,12 @@ export class LettaRuntime {
             ),
           );
         }, this.turnTimeoutMs);
+
+        if (active.cancelled) {
+          beginCancellationDrain();
+          void client.abort({ runtime }).catch(() => undefined);
+          return;
+        }
 
         void client
           .submitInput({
@@ -259,6 +370,10 @@ export class LettaRuntime {
           })
           .then((accepted) => {
             if (!accepted.accepted) {
+              if (active.cancelled) {
+                beginCancellationDrain();
+                return;
+              }
               finish(() =>
                 reject(new Error(accepted.error ?? "Letta rejected the input")),
               );
@@ -272,10 +387,16 @@ export class LettaRuntime {
               );
             }
           })
-          .catch((error) => finish(() => reject(error)));
+          .catch((error) => {
+            if (active.cancelled) {
+              beginCancellationDrain();
+              return;
+            }
+            finish(() => reject(error));
+          });
       });
     } finally {
-      this.activeTurns.delete(options.a2aTaskId);
+      active.runtime = undefined;
     }
   }
 
@@ -351,6 +472,7 @@ export class LettaRuntime {
   private async withConversationLock<T>(
     contextId: string,
     work: () => Promise<T>,
+    signal?: AbortSignal,
   ): Promise<T> {
     const prior = this.conversationTails.get(contextId) ?? Promise.resolve();
     let release!: () => void;
@@ -359,8 +481,8 @@ export class LettaRuntime {
     });
     const queuedTail = prior.then(() => tail);
     this.conversationTails.set(contextId, queuedTail);
-    await prior;
     try {
+      await waitForPriorTurn(prior, signal);
       return await work();
     } finally {
       release();
@@ -403,4 +525,30 @@ function sameRuntime(
       left.agent_id === right.agent_id &&
       left.conversation_id === right.conversation_id,
   );
+}
+
+function waitForPriorTurn(
+  prior: Promise<void>,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!signal) return prior;
+  if (signal.aborted) return Promise.reject(new LettaTurnCancelledError());
+
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(new LettaTurnCancelledError());
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    prior.then(
+      () => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
 }

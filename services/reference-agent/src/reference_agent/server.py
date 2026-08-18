@@ -23,12 +23,14 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from reference_agent.commands import CommandEngine, CommandKind
+from reference_agent.commands import CommandEngine, CommandKind, CommandResult
 
 
 class ReferenceAgentExecutor(AgentExecutor):
     def __init__(self, engine: CommandEngine | None = None) -> None:
         self._engine = engine or CommandEngine()
+        self._last_slow_task_id: str | None = None
+        self._last_canceled_task_id: str | None = None
 
     async def execute(
         self,
@@ -49,9 +51,22 @@ class ReferenceAgentExecutor(AgentExecutor):
 
         updater = TaskUpdater(event_queue, task_id, context_id)
         await updater.start_work()
-        result = self._engine.handle(context_id, context.get_user_input())
+        text = context.get_user_input().strip()
+        if text == "last-slow":
+            result = CommandResult(
+                CommandKind.COMPLETE,
+                self._last_slow_task_id or "(none)",
+            )
+        elif text == "last-canceled":
+            result = CommandResult(
+                CommandKind.COMPLETE,
+                self._last_canceled_task_id or "(none)",
+            )
+        else:
+            result = self._engine.handle(context_id, text)
 
         if result.kind is CommandKind.SLOW:
+            self._last_slow_task_id = task_id
             await asyncio.sleep(result.delay_seconds)
 
         if result.kind is CommandKind.FAIL:
@@ -74,6 +89,7 @@ class ReferenceAgentExecutor(AgentExecutor):
         context: RequestContext,
         event_queue: EventQueue,
     ) -> None:
+        self._last_canceled_task_id = context.task_id or ""
         updater = TaskUpdater(
             event_queue,
             context.task_id or "",
@@ -114,7 +130,10 @@ def build_agent_card(public_base_url: str) -> AgentCard:
             AgentSkill(
                 id="deterministic-interoperability",
                 name="Deterministic interoperability commands",
-                description="Echo, context memory, failure, delay, and cancellation.",
+                description=(
+                    "Echo, context memory, failure, delay, cancellation, "
+                    "and test observations."
+                ),
                 tags=["a2a", "testing", "deterministic"],
                 examples=[
                     "echo hello",
@@ -122,6 +141,8 @@ def build_agent_card(public_base_url: str) -> AgentCard:
                     "context",
                     "fail expected failure",
                     "slow 30",
+                    "last-slow",
+                    "last-canceled",
                 ],
                 input_modes=["text/plain"],
                 output_modes=["text/plain"],
