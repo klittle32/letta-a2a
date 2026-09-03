@@ -4,7 +4,7 @@ An isolated Agent2Agent Protocol playground containing two persistent local Lett
 
 Nothing in this stack connects to the production LiteLLM deployment. The only external dependency is the test model provider called by each local Letta runtime.
 
-The completed proof and limits are summarized in [`docs/CONCLUSIONS.md`](docs/CONCLUSIONS.md). The layered learning path and implementation roadmap live in [`examples/README.md`](examples/README.md). For the smallest observable Agent A → Agent B example, see [`docs/SIMPLE-DEMO.md`](docs/SIMPLE-DEMO.md).
+The completed proof and limits are summarized in [`docs/CONCLUSIONS.md`](docs/CONCLUSIONS.md). The numbered demonstrations and implementation roadmap live in [`examples/README.md`](examples/README.md).
 
 ## Architecture
 
@@ -51,46 +51,17 @@ docker compose logs -f agent-a agent-b bridge reference-agent litellm-a litellm-
 
 The bridge creates `Agent A` and `Agent B` on first startup. Agent identities, conversations, workspaces, and A2A context mappings live in separate named volumes.
 
-## Direct A2A smoke tests
+## Examples
 
-Invoke each agent through LiteLLM:
+Follow the numbered learning path in [`examples/`](examples/README.md). The ready examples cover:
 
-```bash
-node scripts/smoke-a2a.mjs agent-a
-node scripts/smoke-a2a.mjs agent-b
-node scripts/smoke-a2a.mjs reference-agent "echo REFERENCE_OK"
-```
+- `01` — [Agent discovery](examples/01-agent-discovery/)
+- `02` — [Basic messaging across two implementations](examples/02-basic-messaging/)
+- `03` — [Context continuation](examples/03-context-continuation/)
+- `04` — [Letta delegating to an external A2A agent](examples/04-letta-to-external-a2a-agent/)
+- `10` — [Failure and cancellation](examples/10-failure-and-cancellation/)
 
-Exercise Agent A → Agent B delegation:
-
-```bash
-node scripts/smoke-a2a.mjs agent-a \
-  "Use a2a_invoke with target agent-b and message 'Reply with exactly AGENT_B_OK'. Then return only agent-b's answer."
-```
-
-Exercise Agent B → Agent A delegation:
-
-```bash
-node scripts/smoke-a2a.mjs agent-b \
-  "Use a2a_invoke with target agent-a and message 'Reply with exactly AGENT_A_OK'. Then return only agent-a's answer."
-```
-
-Exercise Letta → independent Python A2A delegation:
-
-```bash
-node scripts/smoke-a2a.mjs agent-a \
-  "Use a2a_invoke with target reference-agent and message 'echo LETTA_REFERENCE_OK'. Then return only the reference agent's answer."
-```
-
-Set `A2A_CONTEXT_ID=<prior contextId>` to send a follow-up into the same persistent Letta conversation.
-
-Inspect discovery directly:
-
-```bash
-curl -sS \
-  -H "Authorization: Bearer ${LITELLM_MASTER_KEY:-sk-a2a-lab-only}" \
-  http://127.0.0.1:4001/a2a/agent-a/.well-known/agent-card.json
-```
+Every example uses this shared Compose stack and the reusable client in `scripts/smoke-a2a.mjs`. Planned examples appear only in the index until their behavior and documentation are ready.
 
 ## Development checks
 
@@ -147,11 +118,11 @@ The reset command permanently deletes both local agents, all lab conversations, 
 - Text input and text artifacts are implemented first.
 - Streaming is not advertised yet; the bridge currently publishes one final text artifact per Letta turn.
 - Active task state uses each A2A SDK's in-memory task store. Letta conversation mappings survive bridge restarts, but historical `GetTask` records do not yet. The reference agent intentionally loses tasks and context memory on restart.
-- Push notifications, file parts, authenticated upstream Agent Cards, and production multi-tenant caller identity are intentionally deferred.
+- Push notifications, authenticated upstream Agent Cards, and production multi-tenant caller identity are deferred. Binary file transfer is deliberately out of scope for this reference repository.
 - Each conversation permits one active Letta turn. Concurrent messages to one A2A context are serialized.
 - Delegation is opt-in per turn: the request must explicitly mention `a2a_invoke`. Nested calls carry a hop count, and `MAX_A2A_HOPS=1` prevents accidental agent ping-pong loops. The caller-supplied hop metadata is a loop guard, not an authentication boundary.
 - Canceling an outer Letta task aborts active outbound A2A polling, sends a bounded best-effort `CancelTask` to an accepted remote child, and then aborts the local App Server turn. Tasks canceled while waiting on a conversation lock never start a Letta runtime.
 - Letta turns run in `unrestricted` permission mode because the headless App Server has no human approval channel. The per-turn allowlist is empty for ordinary calls and contains only the scoped, controller-owned `a2a_invoke` tool for explicit delegation requests.
-- Default credentials are fixed lab-only values and both gateway ports bind to loopback. Do not reuse this Compose file unchanged for a shared or production environment.
+- Default credentials are fixed lab-only values and all three gateway ports bind to loopback. Do not reuse this Compose file unchanged for a shared or production environment.
 
 These boundaries keep the experiment focused on discovery, gateway routing, persistent conversation continuity, cancellation, genuine bidirectional Letta delegation, and cross-language interoperability with an independently deployed agent built on the official Python A2A SDK.

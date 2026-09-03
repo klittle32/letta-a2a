@@ -1,6 +1,6 @@
 # A2A Examples Roadmap
 
-This directory is the learning path and implementation roadmap for the repository. Each example teaches one A2A concept using a small Docker-based scenario with a Letta agent and an independently implemented A2A agent.
+This directory is the learning path and implementation roadmap for the repository. Each example teaches one A2A concept using the shared Docker lab, which contains Letta agents and an independently implemented A2A agent.
 
 The external reference agent happens to be written in Python, but the examples describe it as an external A2A agent. Its language and framework are implementation details; any conforming agent should be able to take its place.
 
@@ -32,23 +32,23 @@ Keep one gateway implementation after the comparison. Do not maintain parallel L
 
 | # | Example | State | Main concept |
 |---|---|---|---|
-| 01 | `agent-discovery` | Built; needs example README | Discover identity, capabilities, interfaces, and security requirements through Agent Cards. |
-| 02 | `basic-messaging` | Built; needs example README | Use one A2A client to call both the Letta and external implementations through the same protocol. |
-| 03 | `context-continuation` | Built; needs example README | Reuse an opaque `contextId` to continue an interaction across tasks. |
-| 04 | `letta-to-external-a2a-agent` | Built; needs example README | Letta chooses `a2a_invoke`; the controller calls an independent A2A agent and returns its result. |
+| 01 | [`agent-discovery`](01-agent-discovery/) | Documented; manually verified | Discover agent identity, invocation URL, and protocol version through Agent Cards. |
+| 02 | [`basic-messaging`](02-basic-messaging/) | Documented; manually verified | Use one A2A client to call both the Letta and external implementations through the same protocol. |
+| 03 | [`context-continuation`](03-context-continuation/) | Documented; manually verified | Reuse an opaque `contextId` to continue an interaction across tasks. |
+| 04 | [`letta-to-external-a2a-agent`](04-letta-to-external-a2a-agent/) | Documented; manually verified | Letta chooses `a2a_invoke`; the controller calls an independent A2A agent and returns its result. |
 | 05 | `external-a2a-agent-to-letta` | Next feature | An independent A2A agent discovers and delegates work to Letta. |
 | 06 | `static-bearer-auth` | Planned | Advertise and enforce pre-shared HTTP Bearer authentication. |
 | 07 | `oauth-client-credentials` | Planned | Obtain a short-lived OAuth 2.0 access token and use it for agent-to-agent calls. |
 | 08 | `authorization-policy` | Planned | Permit or deny A2A operations based on authenticated caller identity and scopes. |
 | 09 | `streaming` | Planned | Translate safe Letta App Server WebSocket events into A2A Server-Sent Events. |
-| 10 | `failure-and-cancellation` | Built; needs example README | Observe explicit failure and cancellation, including outer-to-child cancellation propagation. |
+| 10 | [`failure-and-cancellation`](10-failure-and-cancellation/) | Documented; manually verified | Observe explicit failure and cancellation, including outer-to-child cancellation propagation. |
 | 11 | `push-notifications` | Final feature | Register an authenticated webhook, disconnect, and receive asynchronous task updates. |
 
 ## Scenario details
 
 ### 01 — Agent discovery
 
-Fetch both Agent Cards without starting a task. Compare the two implementations while observing the same standard fields: identity, interfaces, capabilities, skills, input/output modes, and security requirements.
+Fetch both gateway-published Agent Cards without starting a task. Compare their identity, invocation URL, and protocol version, then note which richer A2A fields the current minimal gateway cards do not yet publish.
 
 ### 02 — Basic messaging
 
