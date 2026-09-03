@@ -1,0 +1,141 @@
+# A2A Examples Roadmap
+
+This directory is the learning path and implementation roadmap for the repository. Each example teaches one A2A concept using a small Docker-based scenario with a Letta agent and an independently implemented A2A agent.
+
+The external reference agent happens to be written in Python, but the examples describe it as an external A2A agent. Its language and framework are implementation details; any conforming agent should be able to take its place.
+
+## Principles
+
+- Use two agents per scenario. Multi-agent orchestration is a separate topic.
+- Keep every service Dockerized on one host so the repository remains easy to run.
+- Teach protocol behavior rather than product-specific tricks.
+- Add one capability at a time and keep earlier examples working.
+- Use deterministic protocol fixtures where possible; label model-backed demonstrations as live tests.
+- Include exact commands, expected output, and a way to observe each interaction.
+- Create an example subfolder only when its README and behavior are ready. Do not add empty placeholders.
+
+## Gateway checkpoint
+
+Before adding new protocol features, compare [agentgateway](https://agentgateway.dev/docs/standalone/latest/agent/a2a/) with the current LiteLLM gateway. Run the existing discovery, messaging, context, delegation, failure, and cancellation matrix unchanged.
+
+The replacement must prove:
+
+- A2A 1.0 Agent Card and request compatibility.
+- Asynchronous task creation and polling.
+- Letta-to-external-agent nested delegation without gateway re-entry deadlock.
+- Cancellation propagation and stable terminal states.
+- Clearer or simpler configuration, UI, and request tracing than the current LiteLLM lanes.
+
+Keep one gateway implementation after the comparison. Do not maintain parallel LiteLLM and agentgateway versions of every example.
+
+## Progression
+
+| # | Example | State | Main concept |
+|---|---|---|---|
+| 01 | `agent-discovery` | Built; needs example README | Discover identity, capabilities, interfaces, and security requirements through Agent Cards. |
+| 02 | `basic-messaging` | Built; needs example README | Use one A2A client to call both the Letta and external implementations through the same protocol. |
+| 03 | `context-continuation` | Built; needs example README | Reuse an opaque `contextId` to continue an interaction across tasks. |
+| 04 | `letta-to-external-a2a-agent` | Built; needs example README | Letta chooses `a2a_invoke`; the controller calls an independent A2A agent and returns its result. |
+| 05 | `external-a2a-agent-to-letta` | Next feature | An independent A2A agent discovers and delegates work to Letta. |
+| 06 | `static-bearer-auth` | Planned | Advertise and enforce pre-shared HTTP Bearer authentication. |
+| 07 | `oauth-client-credentials` | Planned | Obtain a short-lived OAuth 2.0 access token and use it for agent-to-agent calls. |
+| 08 | `authorization-policy` | Planned | Permit or deny A2A operations based on authenticated caller identity and scopes. |
+| 09 | `streaming` | Planned | Translate safe Letta App Server WebSocket events into A2A Server-Sent Events. |
+| 10 | `failure-and-cancellation` | Built; needs example README | Observe explicit failure and cancellation, including outer-to-child cancellation propagation. |
+| 11 | `push-notifications` | Final feature | Register an authenticated webhook, disconnect, and receive asynchronous task updates. |
+
+## Scenario details
+
+### 01 — Agent discovery
+
+Fetch both Agent Cards without starting a task. Compare the two implementations while observing the same standard fields: identity, interfaces, capabilities, skills, input/output modes, and security requirements.
+
+### 02 — Basic messaging
+
+Use one client flow for both agents:
+
+1. Send a message asynchronously.
+2. Receive a task ID.
+3. Poll with `GetTask`.
+4. Read the completed text artifact.
+
+This is the smallest interoperability proof.
+
+### 03 — Context continuation
+
+Capture the server-generated `contextId`, send a follow-up using that opaque value, and show continuity. Explain that the Letta bridge maps the A2A context to a Letta conversation rather than treating the two IDs as interchangeable.
+
+### 04 — Letta to an external A2A agent
+
+Send a request to Letta that warrants delegation. Letta calls its scoped, controller-owned `a2a_invoke` tool; the controller performs the A2A task lifecycle against the external agent and returns the result to the active Letta turn.
+
+### 05 — External A2A agent to Letta
+
+Give the external reference agent one narrow outbound delegation path. It discovers Letta's Agent Card, sends an asynchronous task through the official A2A client SDK, polls for completion, and returns the Letta artifact. This completes two-way cross-framework interoperability without adding another agent.
+
+### 06 — Static Bearer authentication
+
+Declare HTTP Bearer authentication in the Agent Card and demonstrate three requests: missing token, incorrect token, and valid token. Missing or invalid credentials must receive `401`; credentials must never appear in logs.
+
+### 07 — OAuth client credentials
+
+Use a small local authorization server. The calling agent exchanges its client credentials for a short-lived access token, then sends that token as HTTP Bearer authentication. Validate issuer, audience, signature, expiry, and declared scopes. Keep browser login and end-user authorization flows out of this server-to-server example.
+
+### 08 — Authorization policy
+
+Separate identity from permission. Use valid credentials with different scopes to prove that one caller may invoke or inspect an operation while another receives `403`. Authorization must be enforced by the gateway or controller, never by asking the model to comply.
+
+### 09 — Streaming
+
+Advertise streaming in the Agent Card and use A2A streaming or task subscription over Server-Sent Events. The bridge translates safe Letta App Server WebSocket events into ordered task-status and artifact updates, ending at a terminal state. Do not expose private reasoning or arbitrary internal runtime events.
+
+### 10 — Failure and cancellation
+
+Demonstrate deterministic remote failure, direct task cancellation, and cancellation of a Letta task with an active remote child. Show that both tasks remain terminal and that canceled work does not release its conversation lock before the underlying runtime ends or reaches its bounded fallback.
+
+### 11 — Push notifications
+
+Register an authenticated webhook for a long-running task, disconnect the initiating client, and receive a later task update by HTTP POST. Verify callback authentication, duplicate-delivery safety, and retrieval of the final task. This stays last because it adds a second inbound security boundary and delivery-reliability concerns.
+
+## Required README shape
+
+Every implemented example gets `examples/<number>-<name>/README.md` with:
+
+```text
+# Example title
+
+## What this teaches
+## Message flow
+## Run it
+## Expected result
+## Watch it happen
+## What the controller is doing
+## Boundaries
+```
+
+Each README must contain one small diagram, copyable commands, short expected output, the task/context IDs worth observing, and a filtered log command.
+
+## Delivery workflow
+
+For each roadmap row:
+
+1. Select one example and define its bounded acceptance criteria.
+2. Write failing tests first when behavior is new.
+3. Implement only what that example requires.
+4. Add the example README beside the behavior.
+5. Run the focused tests, deterministic protocol matrix, and live integration suite when applicable.
+6. Update this roadmap in the same commit.
+7. Fast-forward the reviewed slice to `main`.
+
+Create a GitHub issue only when work needs design discussion, spans several sessions, is blocked externally, is suitable for another contributor, or uncovers a bug that should not interrupt the current layer. Do not create one issue per roadmap row by default.
+
+## Deliberate non-goals
+
+- Three-agent orchestration scenarios.
+- Deployment across multiple physical hosts.
+- Binary file transfer. A2A supports file parts, but storage, scanning, limits, and URI lifecycle would distract from this repository's purpose.
+- A URL-handoff example. Sending a URL is ordinary message content, not a distinct A2A capability.
+- Dynamic registry-based service discovery. Known Agent Card endpoints are sufficient for two fixed agents.
+- Kubernetes or production multi-tenant deployment.
+
+These boundaries do not imply that the features are unimportant. They keep this repository focused on a complete, understandable A2A interaction between Letta and another conforming agent.

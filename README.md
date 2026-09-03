@@ -4,7 +4,7 @@ An isolated Agent2Agent Protocol playground containing two persistent local Lett
 
 Nothing in this stack connects to the production LiteLLM deployment. The only external dependency is the test model provider called by each local Letta runtime.
 
-The completed proof and limits are summarized in [`docs/CONCLUSIONS.md`](docs/CONCLUSIONS.md). For the smallest observable Agent A → Agent B example, see [`docs/SIMPLE-DEMO.md`](docs/SIMPLE-DEMO.md).
+The completed proof and limits are summarized in [`docs/CONCLUSIONS.md`](docs/CONCLUSIONS.md). The layered learning path and implementation roadmap live in [`examples/README.md`](examples/README.md). For the smallest observable Agent A → Agent B example, see [`docs/SIMPLE-DEMO.md`](docs/SIMPLE-DEMO.md).
 
 ## Architecture
 
