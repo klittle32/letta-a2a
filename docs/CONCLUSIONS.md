@@ -9,11 +9,11 @@ The lab has answered the architectural question. Do not add more protocol machin
 ## What the lab proved
 
 - Two separately persisted Letta App Servers can call each other through A2A in both directions.
-- A non-Letta Python agent built on the official A2A SDK interoperates through the same gateway pattern.
-- Agent Cards, asynchronous `SendMessage`, `GetTask`, context continuation, terminal failure, and cancellation work through LiteLLM 1.97.0.
+- A non-Letta Python agent built on the official A2A SDK interoperates through the same shared gateway.
+- Agent Cards, asynchronous `SendMessage`, `GetTask`, context continuation, terminal failure, and cancellation work through agentgateway v1.5.0.
 - Canceling an outer Letta task propagates to its accepted remote child task without releasing the same-conversation lock early or allowing conflicting terminal states.
-- Separate LiteLLM lanes are necessary for nested calls in this version. Re-entering the active gateway process can deadlock.
-- A2A 0.3 compatibility remains necessary behind LiteLLM because task forwarding does not preserve the 1.0 version header.
+- Nested calls safely re-enter one agentgateway process, so target-specific gateway lanes are unnecessary.
+- Agentgateway preserves and rewrites the richer backend Agent Cards rather than replacing them with minimal config-defined cards.
 
 ## What it did not prove
 
@@ -21,6 +21,7 @@ The lab has answered the architectural question. Do not add more protocol machin
 - Streaming, push notifications, or file artifacts.
 - Communication between two physical hosts. The ordinary demo uses isolated containers on one host; the same protocol path can be extended across hosts once each gateway is published securely.
 - Deterministic LLM behavior. Protocol-only tests are deterministic; live Letta delegation still depends on the configured model provider.
+- Complete A2A 1.0 gateway conformance, signed-card rewriting, or database-backed A2A logs. See [`GATEWAY_DECISION.md`](GATEWAY_DECISION.md).
 
 ## Examples
 

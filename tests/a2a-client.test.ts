@@ -16,7 +16,7 @@ describe("A2A client transport", () => {
     });
   });
 
-  test("sends a version 1.0 SendMessage request through LiteLLM", async () => {
+  test("sends a version 1.0 SendMessage request through the A2A gateway", async () => {
     const captured: Array<{ url: string; init?: RequestInit }> = [];
 
     const result = await invokeA2A(
@@ -27,7 +27,7 @@ describe("A2A client transport", () => {
         hop: 1,
       },
       {
-        gatewayUrl: "http://litellm:4000",
+        gatewayUrl: "http://gateway:4000",
         gatewayKey: "test-key",
         pollIntervalMs: 0,
       },
@@ -68,7 +68,7 @@ describe("A2A client transport", () => {
       },
     );
 
-    expect(captured[0]?.url).toBe("http://litellm:4000/a2a/agent-b");
+    expect(captured[0]?.url).toBe("http://gateway:4000/a2a/agent-b");
     expect(captured[0]?.init?.headers).toEqual({
       Authorization: "Bearer test-key",
       "Content-Type": "application/json",
@@ -101,7 +101,7 @@ describe("A2A client transport", () => {
     const invocation = invokeA2A(
       { target: "reference-agent", message: "slow 30" },
       {
-        gatewayUrl: "http://litellm-reference:4000",
+        gatewayUrl: "http://gateway:4000",
         gatewayKey: "test-key",
         pollIntervalMs: 60_000,
         cancelTimeoutMs: 1_000,
@@ -156,7 +156,7 @@ describe("A2A client transport", () => {
     const invocation = invokeA2A(
       { target: "reference-agent", message: "slow 30" },
       {
-        gatewayUrl: "http://litellm-reference:4000",
+        gatewayUrl: "http://gateway:4000",
         gatewayKey: "test-key",
         pollIntervalMs: 60_000,
         timeoutMs: 10,

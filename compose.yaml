@@ -32,31 +32,6 @@ x-letta-runtime: &letta-runtime
     retries: 20
     start_period: 10s
 
-x-litellm-gateway: &litellm-gateway
-  image: ghcr.io/berriai/litellm@sha256:468c25f35f3e5ec4e414974f00deab93337b1b4d9953cabcfd3722e59415f834
-  restart: unless-stopped
-  command: ["--config", "/app/config.yaml", "--port", "4000"]
-  environment:
-    LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-a2a-lab-only}
-  volumes:
-    - ./litellm/config.yaml:/app/config.yaml:ro
-  networks: [a2a-lab]
-  depends_on:
-    bridge:
-      condition: service_healthy
-  healthcheck:
-    test:
-      [
-        "CMD",
-        "python",
-        "-c",
-        "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=2)",
-      ]
-    interval: 5s
-    timeout: 3s
-    retries: 20
-    start_period: 10s
-
 services:
   agent-a:
     <<: *letta-runtime
@@ -84,8 +59,8 @@ services:
       TURN_TIMEOUT_MS: ${TURN_TIMEOUT_MS:-120000}
       MAX_A2A_HOPS: ${MAX_A2A_HOPS:-1}
       LETTA_TEST_MODEL: ${LETTA_TEST_MODEL:-openai/gpt-4.1-nano}
-      A2A_GATEWAY_URLS: '{"agent-a":"http://litellm-a:4000","agent-b":"http://litellm-b:4000","reference-agent":"http://litellm-reference:4000"}'
-      A2A_GATEWAY_KEY: ${LITELLM_MASTER_KEY:-sk-a2a-lab-only}
+      A2A_GATEWAY_URLS: '{"agent-a":"http://agentgateway:4000","agent-b":"http://agentgateway:4000","reference-agent":"http://agentgateway:4000"}'
+      A2A_GATEWAY_KEY: ${A2A_GATEWAY_KEY:-sk-a2a-lab-only}
       AGENT_DEFINITIONS: >-
         [{"key":"agent-a","displayName":"Agent A","appServerUrl":"ws://agent-a:4500","appServerToken":"${LETTA_APP_SERVER_TOKEN:-a2a-lab-app-server-token}"},{"key":"agent-b","displayName":"Agent B","appServerUrl":"ws://agent-b:4500","appServerToken":"${LETTA_APP_SERVER_TOKEN:-a2a-lab-app-server-token}"}]
     volumes:
@@ -109,16 +84,6 @@ services:
       retries: 20
       start_period: 10s
 
-  litellm-a:
-    <<: *litellm-gateway
-    ports:
-      - "127.0.0.1:${LITELLM_A_PORT:-4001}:4000"
-
-  litellm-b:
-    <<: *litellm-gateway
-    ports:
-      - "127.0.0.1:${LITELLM_B_PORT:-4002}:4000"
-
   reference-agent:
     build:
       context: ./services/reference-agent
@@ -140,13 +105,21 @@ services:
       retries: 30
       start_period: 5s
 
-  litellm-reference:
-    <<: *litellm-gateway
+  agentgateway:
+    image: cr.agentgateway.dev/agentgateway@sha256:bf2f339ef326d32def2aaeb44b1b4549801293c19b89e764a4228667d97d9896
+    restart: unless-stopped
+    command: ["-f", "/config.yaml"]
+    environment:
+      A2A_GATEWAY_KEY: ${A2A_GATEWAY_KEY:-sk-a2a-lab-only}
+    volumes:
+      - ./agentgateway/config.yaml:/config.yaml:ro
+    networks: [a2a-lab]
     depends_on:
       reference-agent:
         condition: service_healthy
     ports:
-      - "127.0.0.1:${LITELLM_REFERENCE_PORT:-4003}:4000"
+      - "127.0.0.1:${A2A_GATEWAY_PORT:-4000}:4000"
+      - "127.0.0.1:${A2A_GATEWAY_UI_PORT:-4090}:4090"
 
 networks:
   a2a-lab:

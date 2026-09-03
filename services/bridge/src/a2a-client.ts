@@ -111,17 +111,17 @@ export async function invokeA2A(
     });
     const rawBody = await response.text();
     if (!response.ok) {
-      throw new Error(`LiteLLM A2A request failed (${response.status}): ${rawBody}`);
+      throw new Error(`A2A gateway request failed (${response.status}): ${rawBody}`);
     }
     let payload: unknown;
     try {
       payload = JSON.parse(rawBody);
     } catch {
-      throw new Error("LiteLLM returned a non-JSON A2A response");
+      throw new Error("A2A gateway returned a non-JSON response");
     }
     const envelope = asRecord(payload);
     if (envelope?.error !== undefined) {
-      throw new Error(`LiteLLM returned an A2A error: ${JSON.stringify(envelope.error)}`);
+      throw new Error(`A2A gateway returned an error: ${JSON.stringify(envelope.error)}`);
     }
     return payload;
   };

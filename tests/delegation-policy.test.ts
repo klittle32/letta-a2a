@@ -31,7 +31,7 @@ describe("delegation hop policy", () => {
     expect(extractA2AHop({ lettaA2aLab: { hop: -1 } })).toBe(0);
   });
 
-  test("rejects blocking requests that would re-enter one LiteLLM gateway", () => {
+  test("rejects blocking delegation requests", () => {
     expect(() =>
       assertDelegationRequestIsAsync("Use a2a_invoke to ask agent-b", false),
     ).toThrow("returnImmediately=true");

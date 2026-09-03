@@ -11,27 +11,27 @@ const liveLetta =
 const project =
   process.env.A2A_INTEGRATION_PROJECT ??
   `letta-a2a-integration-${process.pid}-${randomUUID().slice(0, 8)}`;
-const agentAPort =
-  process.env.A2A_INTEGRATION_AGENT_A_PORT ??
-  (managed ? await findFreePort() : "4001");
-const referencePort =
-  process.env.A2A_INTEGRATION_REFERENCE_PORT ??
-  (managed ? await findFreePort() : "4003");
-const apiKey = process.env.LITELLM_MASTER_KEY ?? "sk-a2a-lab-only";
+const gatewayPort =
+  process.env.A2A_INTEGRATION_GATEWAY_PORT ??
+  process.env.A2A_GATEWAY_PORT ??
+  (managed ? await findFreePort() : "4000");
+const gatewayUiPort =
+  process.env.A2A_INTEGRATION_GATEWAY_UI_PORT ??
+  process.env.A2A_GATEWAY_UI_PORT ??
+  (managed ? await findFreePort() : "4090");
+const apiKey = process.env.A2A_GATEWAY_KEY ?? "sk-a2a-lab-only";
 const composeEnv = {
   ...process.env,
-  LITELLM_A_PORT: agentAPort,
-  LITELLM_B_PORT:
-    process.env.A2A_INTEGRATION_AGENT_B_PORT ??
-    (managed ? await findFreePort() : "4002"),
-  LITELLM_REFERENCE_PORT: referencePort,
+  A2A_GATEWAY_PORT: gatewayPort,
+  A2A_GATEWAY_UI_PORT: gatewayUiPort,
+  A2A_GATEWAY_KEY: apiKey,
   ...(!liveLetta && !process.env.OPENAI_API_KEY
     ? { OPENAI_API_KEY: "sk-unused-reference-only" }
     : {}),
 };
-const agentA = createClient(`http://127.0.0.1:${agentAPort}`, "agent-a");
+const agentA = createClient(`http://127.0.0.1:${gatewayPort}`, "agent-a");
 const reference = createClient(
-  `http://127.0.0.1:${referencePort}`,
+  `http://127.0.0.1:${gatewayPort}`,
   "reference-agent",
 );
 
@@ -45,8 +45,8 @@ try {
       "--wait",
       "--wait-timeout",
       "240",
-      "litellm-reference",
-      ...(liveLetta ? ["litellm-a"] : []),
+      "agentgateway",
+      ...(liveLetta ? ["bridge"] : []),
     ]);
   }
 
@@ -79,16 +79,10 @@ if (failure) {
 }
 
 async function runChecks() {
-  const card = await reference.card();
-  assert(card.name === "Independent Reference Agent", "unexpected Agent Card name");
-  assert(
-    card.protocolVersion === "1.0" ||
-      card.supportedInterfaces?.some(
-        (item) => item.protocolVersion === "1.0",
-      ),
-    "reference Agent Card does not advertise A2A 1.0",
-  );
-  passed("Agent Card discovery through LiteLLM");
+  const card = await waitForCard(reference);
+  await assertGatewayAuthentication();
+  assertGatewayCard(card, "Independent Reference Agent", "reference-agent");
+  passed("Agent Card discovery through agentgateway");
 
   const echo = await reference.sendAndPoll("echo REFERENCE_DIRECT_OK");
   assert(echo.pollCount > 0, "async echo completed without a GetTask poll");
@@ -138,6 +132,10 @@ async function runChecks() {
   passed("deterministic cancellation remains terminal");
 
   if (liveLetta) {
+    const lettaCard = await agentA.card();
+    assertGatewayCard(lettaCard, "Agent A", "agent-a");
+    passed("Letta Agent Card preservation and URL rewriting");
+
     const delegated = await agentA.sendAndPoll(
       "Use a2a_invoke with target reference-agent and message 'echo LETTA_REFERENCE_OK'. Then return only the reference agent's answer.",
     );
@@ -201,6 +199,78 @@ async function runChecks() {
   }
 }
 
+function assertGatewayCard(card, expectedName, target) {
+  assert(card.name === expectedName, `unexpected ${target} Agent Card name`);
+  assert(
+    card.protocolVersion === "1.0" ||
+      card.supportedInterfaces?.some(
+        (item) => item.protocolVersion === "1.0",
+      ),
+    `${target} Agent Card does not advertise A2A 1.0`,
+  );
+  assert(
+    Array.isArray(card.skills) && card.skills.length > 0,
+    `${target} Agent Card lost its skills`,
+  );
+  assert(card.capabilities, `${target} Agent Card lost its capabilities`);
+  const interfaceV1 = card.supportedInterfaces?.find(
+    (item) => item.protocolVersion === "1.0",
+  );
+  assert(interfaceV1?.url, `${target} Agent Card has no A2A 1.0 interface URL`);
+  const advertised = new URL(interfaceV1.url);
+  assert(
+    advertised.hostname === "127.0.0.1" &&
+      advertised.port === String(gatewayPort) &&
+      advertised.pathname.replace(/\/$/, "") === `/a2a/${target}`,
+    `${target} Agent Card advertises an unreachable interface: ${interfaceV1.url}`,
+  );
+}
+
+async function assertGatewayAuthentication() {
+  const cardUrl = `http://127.0.0.1:${gatewayPort}/a2a/reference-agent/.well-known/agent-card.json`;
+  const rpcUrl = `http://127.0.0.1:${gatewayPort}/a2a/reference-agent`;
+  const missing = await fetch(cardUrl);
+  assert(
+    missing.status === 401,
+    `missing gateway key returned ${missing.status}, expected 401`,
+  );
+  const wrong = await fetch(cardUrl, {
+    headers: { Authorization: "Bearer wrong-a2a-lab-key" },
+  });
+  assert(
+    wrong.status === 401,
+    `incorrect gateway key returned ${wrong.status}, expected 401`,
+  );
+  const rpcBody = JSON.stringify({
+    jsonrpc: "2.0",
+    id: randomUUID(),
+    method: "GetTask",
+    params: { id: "authentication-probe" },
+  });
+  const missingRpc = await fetch(rpcUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: rpcBody,
+  });
+  assert(
+    missingRpc.status === 401,
+    `missing gateway key on RPC returned ${missingRpc.status}, expected 401`,
+  );
+  const wrongRpc = await fetch(rpcUrl, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer wrong-a2a-lab-key",
+      "Content-Type": "application/json",
+    },
+    body: rpcBody,
+  });
+  assert(
+    wrongRpc.status === 401,
+    `incorrect gateway key on RPC returned ${wrongRpc.status}, expected 401`,
+  );
+  passed("strict gateway-key authentication");
+}
+
 async function waitForReferenceObservation(command, predicate) {
   const deadline = Date.now() + 60_000;
   let lastValue = "";
@@ -215,6 +285,22 @@ async function waitForReferenceObservation(command, predicate) {
   throw new Error(
     `timed out waiting for reference observation ${command}; last value: ${lastValue}`,
   );
+}
+
+async function waitForCard(client) {
+  const deadline = Date.now() + 120_000;
+  let lastError;
+  while (Date.now() < deadline) {
+    try {
+      return await client.card();
+    } catch (error) {
+      lastError = error;
+      await sleep(250);
+    }
+  }
+  throw new Error("timed out waiting for agentgateway Agent Card", {
+    cause: lastError,
+  });
 }
 
 function createClient(baseUrl, target) {

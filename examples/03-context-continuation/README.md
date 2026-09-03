@@ -51,7 +51,7 @@ It receives a new task ID because it is new work within the existing context.
 ## Watch it happen
 
 ```bash
-docker compose logs -f --since=0s litellm-reference reference-agent
+docker compose logs -f --since=0s agentgateway reference-agent
 ```
 
 ## What the controller is doing

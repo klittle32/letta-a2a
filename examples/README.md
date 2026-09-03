@@ -14,19 +14,19 @@ The external reference agent happens to be written in Python, but the examples d
 - Include exact commands, expected output, and a way to observe each interaction.
 - Create an example subfolder only when its README and behavior are ready. Do not add empty placeholders.
 
-## Gateway checkpoint
+## Gateway decision
 
-Before adding new protocol features, compare [agentgateway](https://agentgateway.dev/docs/standalone/latest/agent/a2a/) with the current LiteLLM gateway. Run the existing discovery, messaging, context, delegation, failure, and cancellation matrix unchanged.
+The gateway checkpoint is complete. [agentgateway](https://agentgateway.dev/docs/standalone/latest/agent/a2a/) v1.5.0 passed the existing discovery, messaging, context, delegation, failure, and cancellation matrix through one shared process and replaced the three LiteLLM lanes.
 
-The replacement must prove:
+The evaluation proved:
 
-- A2A 1.0 Agent Card and request compatibility.
+- A2A 1.0 Agent Card and request compatibility for the tested JSON-RPC paths.
 - Asynchronous task creation and polling.
 - Letta-to-external-agent nested delegation without gateway re-entry deadlock.
 - Cancellation propagation and stable terminal states.
-- Clearer or simpler configuration, UI, and request tracing than the current LiteLLM lanes.
+- Strict gateway-key enforcement, preservation of the tested card fields, rewriting of the tested A2A 1.0 interface URL, a reachable UI, and richer structured A2A logs.
 
-Keep one gateway implementation after the comparison. Do not maintain parallel LiteLLM and agentgateway versions of every example.
+The repository keeps only agentgateway. Evidence and limitations are recorded in [`docs/GATEWAY_DECISION.md`](../docs/GATEWAY_DECISION.md).
 
 ## Progression
 
@@ -37,7 +37,7 @@ Keep one gateway implementation after the comparison. Do not maintain parallel L
 | 03 | [`context-continuation`](03-context-continuation/) | Documented; manually verified | Reuse an opaque `contextId` to continue an interaction across tasks. |
 | 04 | [`letta-to-external-a2a-agent`](04-letta-to-external-a2a-agent/) | Documented; manually verified | Letta chooses `a2a_invoke`; the controller calls an independent A2A agent and returns its result. |
 | 05 | `external-a2a-agent-to-letta` | Next feature | An independent A2A agent discovers and delegates work to Letta. |
-| 06 | `static-bearer-auth` | Planned | Advertise and enforce pre-shared HTTP Bearer authentication. |
+| 06 | `static-bearer-auth` | Gateway enforcement built; example pending | Advertise the gateway policy in Agent Cards and demonstrate missing, incorrect, and valid credentials. |
 | 07 | `oauth-client-credentials` | Planned | Obtain a short-lived OAuth 2.0 access token and use it for agent-to-agent calls. |
 | 08 | `authorization-policy` | Planned | Permit or deny A2A operations based on authenticated caller identity and scopes. |
 | 09 | `streaming` | Planned | Translate safe Letta App Server WebSocket events into A2A Server-Sent Events. |
@@ -48,7 +48,7 @@ Keep one gateway implementation after the comparison. Do not maintain parallel L
 
 ### 01 — Agent discovery
 
-Fetch both gateway-published Agent Cards without starting a task. Compare their identity, invocation URL, and protocol version, then note which richer A2A fields the current minimal gateway cards do not yet publish.
+Fetch both gateway-published Agent Cards without starting a task. Compare their identity, rewritten invocation URL, protocol version, capabilities, skills, and current security declarations.
 
 ### 02 — Basic messaging
 
@@ -75,7 +75,7 @@ Give the external reference agent one narrow outbound delegation path. It discov
 
 ### 06 — Static Bearer authentication
 
-Declare HTTP Bearer authentication in the Agent Card and demonstrate three requests: missing token, incorrect token, and valid token. Missing or invalid credentials must receive `401`; credentials must never appear in logs.
+Turn the current out-of-band lab key into a complete protocol example. Declare HTTP Bearer authentication in the Agent Card and demonstrate three requests: missing token, incorrect token, and valid token. Missing or invalid credentials must receive `401`; credentials must never appear in logs.
 
 ### 07 — OAuth client credentials
 

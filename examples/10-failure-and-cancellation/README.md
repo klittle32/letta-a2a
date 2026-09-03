@@ -81,7 +81,7 @@ Against the ordinary lab, start this first:
 
 ```bash
 docker compose logs -f --since=0s \
-  litellm-a litellm-reference bridge agent-a reference-agent
+  agentgateway bridge agent-a reference-agent
 ```
 
 Managed integration runs use their own temporary Compose project and print its logs automatically when an assertion fails.

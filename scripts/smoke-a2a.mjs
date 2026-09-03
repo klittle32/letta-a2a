@@ -3,15 +3,9 @@
 import { randomUUID } from "node:crypto";
 
 const target = process.argv[2] ?? "agent-a";
-const defaultPorts = {
-  "agent-a": "4001",
-  "agent-b": "4002",
-  "reference-agent": "4003",
-};
 const baseUrl =
-  process.env.LITELLM_BASE_URL ??
-  `http://127.0.0.1:${defaultPorts[target] ?? "4001"}`;
-const apiKey = process.env.LITELLM_MASTER_KEY ?? "sk-a2a-lab-only";
+  process.env.A2A_GATEWAY_URL ?? "http://127.0.0.1:4000";
+const apiKey = process.env.A2A_GATEWAY_KEY ?? "sk-a2a-lab-only";
 const prompt =
   process.argv.slice(3).join(" ") ||
   "Reply briefly with your agent name and confirm that A2A reached you.";

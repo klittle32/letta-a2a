@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=https://agentgateway.dev/schema/config
+
+config:
+  logging:
+    format: json
+
+gateways:
+  a2a:
+    port: 4000
+    apiKey:
+      mode: strict
+      keys:
+        - key: "$A2A_GATEWAY_KEY"
+  ui:
+    port: 4090
+
+routes:
+  - name: agent-a
+    gateways: [a2a]
+    matches:
+      - path:
+          pathPrefix: /a2a/agent-a
+    policies:
+      a2a: {}
+      urlRewrite:
+        path:
+          prefix: /agents/agent-a
+    backends:
+      - host: bridge:8080
+
+  - name: agent-b
+    gateways: [a2a]
+    matches:
+      - path:
+          pathPrefix: /a2a/agent-b
+    policies:
+      a2a: {}
+      urlRewrite:
+        path:
+          prefix: /agents/agent-b
+    backends:
+      - host: bridge:8080
+
+  - name: reference-agent
+    gateways: [a2a]
+    matches:
+      - path:
+          pathPrefix: /a2a/reference-agent
+    policies:
+      a2a: {}
+      urlRewrite:
+        path:
+          prefix: /
+    backends:
+      - host: reference-agent:8090
+
+ui:
+  gateways: [ui]

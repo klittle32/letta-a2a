@@ -9,11 +9,11 @@ This example compares a Letta-backed agent with an independently implemented A2A
 ## Message flow
 
 ```text
-client ──GET /a2a/agent-a/...──────────▶ LiteLLM lane :4001
-client ──GET /a2a/reference-agent/...──▶ LiteLLM lane :4003
+client ──GET /a2a/agent-a/...──────────▶ agentgateway :4000 ──▶ bridge
+client ──GET /a2a/reference-agent/...──▶ agentgateway :4000 ──▶ external agent
 ```
 
-All three LiteLLM processes load the same agent catalog. Using a target-specific lane is a routing convention that prevents nested calls from re-entering the gateway process handling the outer task; it is not a different catalog per lane.
+One agentgateway process routes each public path to the corresponding backend and rewrites the backend card's interface URLs to the client-visible gateway path.
 
 ## Run it
 
@@ -28,8 +28,8 @@ Fetch the Letta agent's card:
 
 ```bash
 curl -sS \
-  -H "Authorization: Bearer ${LITELLM_MASTER_KEY:-sk-a2a-lab-only}" \
-  http://127.0.0.1:4001/a2a/agent-a/.well-known/agent-card.json \
+  -H "Authorization: Bearer ${A2A_GATEWAY_KEY:-sk-a2a-lab-only}" \
+  http://127.0.0.1:4000/a2a/agent-a/.well-known/agent-card.json \
   | jq
 ```
 
@@ -37,30 +37,29 @@ Fetch the external agent's card:
 
 ```bash
 curl -sS \
-  -H "Authorization: Bearer ${LITELLM_MASTER_KEY:-sk-a2a-lab-only}" \
-  http://127.0.0.1:4003/a2a/reference-agent/.well-known/agent-card.json \
+  -H "Authorization: Bearer ${A2A_GATEWAY_KEY:-sk-a2a-lab-only}" \
+  http://127.0.0.1:4000/a2a/reference-agent/.well-known/agent-card.json \
   | jq
 ```
 
 ## Expected result
 
-The cards should identify `Agent A` and `Independent Reference Agent`, provide their gateway invocation URLs, and advertise protocol version `1.0`. No task or context ID is created.
+The cards should identify `Agent A` and `Independent Reference Agent`, advertise their capabilities and skills, and provide A2A 1.0 interface URLs under `http://127.0.0.1:4000/a2a/...`. No task or context ID is created.
 
 ## Watch it happen
 
 ```bash
-docker compose logs -f --since=0s litellm-a litellm-reference bridge reference-agent
+docker compose logs -f --since=0s agentgateway bridge reference-agent
 ```
 
 The gateway logs show Agent Card requests, but neither backend agent starts a task.
 
 ## What the controller is doing
 
-LiteLLM publishes a small config-defined card for each target and rewrites the public invocation URL to its own gateway path. The request does not need to reach the Letta bridge or external agent.
+Each backend constructs its own Agent Card. Agentgateway proxies that card and rewrites its interface URLs to the public route while preserving the backend's capabilities and skills.
 
 ## Boundaries
 
 - The two card locations are configured rather than found through a dynamic registry.
-- The current gateway cards are intentionally minimal: name, description, invocation URL, and protocol version. They do not yet expose the richer capabilities, skills, or security declarations available in the backend cards.
-- The Bearer value in these commands is an out-of-band LiteLLM gateway key; the current cards do not declare it as an A2A security scheme. Later examples add aligned authentication declarations and enforcement.
-- A2A 0.3 compatibility is also advertised because of a known LiteLLM forwarding limitation, but the client-facing target is A2A 1.0.
+- Agentgateway strictly enforces the Bearer value in these commands, but the proxied backend cards do not yet declare that gateway policy as an A2A security scheme. Later examples align declarations and enforcement.
+- A2A 0.3 compatibility is also advertised for broader clients, but the tested client-facing target is A2A 1.0.

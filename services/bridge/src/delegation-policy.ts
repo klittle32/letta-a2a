@@ -20,7 +20,7 @@ export function assertDelegationRequestIsAsync(
 ): void {
   if (/\ba2a_invoke\b/i.test(text) && !returnImmediately) {
     throw new Error(
-      "Bidirectional delegation through one LiteLLM gateway requires configuration.returnImmediately=true; poll the returned task with GetTask.",
+      "Delegation requires configuration.returnImmediately=true; poll the returned task with GetTask.",
     );
   }
 }

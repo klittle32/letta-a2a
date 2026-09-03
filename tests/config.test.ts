@@ -89,18 +89,18 @@ describe("loadAgentDefinitions", () => {
     expect(
       loadGatewayUrls(
         JSON.stringify({
-          "agent-a": "http://litellm-a:4000",
-          "agent-b": "http://litellm-b:4000/",
+          "agent-a": "http://gateway:4000",
+          "agent-b": "http://gateway:4000/",
         }),
         definitions,
       ),
     ).toEqual({
-      "agent-a": "http://litellm-a:4000",
-      "agent-b": "http://litellm-b:4000",
+      "agent-a": "http://gateway:4000",
+      "agent-b": "http://gateway:4000",
     });
     expect(() =>
       loadGatewayUrls(
-        JSON.stringify({ "agent-a": "http://litellm-a:4000" }),
+        JSON.stringify({ "agent-a": "http://gateway:4000" }),
         definitions,
       ),
     ).toThrow("agent-b");
@@ -121,14 +121,14 @@ describe("loadAgentDefinitions", () => {
     expect(
       loadGatewayUrls(
         JSON.stringify({
-          "agent-a": "http://litellm-a:4000",
-          "reference-agent": "http://litellm-reference:4000",
+          "agent-a": "http://gateway:4000",
+          "reference-agent": "http://gateway:4000",
         }),
         definitions,
       ),
     ).toEqual({
-      "agent-a": "http://litellm-a:4000",
-      "reference-agent": "http://litellm-reference:4000",
+      "agent-a": "http://gateway:4000",
+      "reference-agent": "http://gateway:4000",
     });
   });
 
@@ -146,13 +146,13 @@ describe("loadAgentDefinitions", () => {
 
     expect(() =>
       loadGatewayUrls(
-        JSON.stringify({ "agent-a": "http://user:secret@litellm-a:4000" }),
+        JSON.stringify({ "agent-a": "http://user:secret@gateway:4000" }),
         definitions,
       ),
     ).toThrow("credentials");
     expect(() =>
       loadGatewayUrls(
-        JSON.stringify({ "agent-a": "http://litellm-a:4000?redirect=elsewhere" }),
+        JSON.stringify({ "agent-a": "http://gateway:4000?redirect=elsewhere" }),
         definitions,
       ),
     ).toThrow("query");

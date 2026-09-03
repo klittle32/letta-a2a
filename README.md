@@ -1,36 +1,36 @@
 # Letta A2A Lab
 
-An isolated Agent2Agent Protocol playground containing two persistent local Letta agents, an independent deterministic Python A2A agent, a shared A2A 1.0 bridge, and disposable LiteLLM gateway lanes.
+An isolated Agent2Agent Protocol playground containing two persistent local Letta agents, an independent deterministic Python A2A agent, a shared A2A 1.0 bridge, and one agentgateway proxy.
 
-Nothing in this stack connects to the production LiteLLM deployment. The only external dependency is the test model provider called by each local Letta runtime.
+The only external runtime dependency is the test model provider called by each local Letta runtime.
 
 The completed proof and limits are summarized in [`docs/CONCLUSIONS.md`](docs/CONCLUSIONS.md). The numbered demonstrations and implementation roadmap live in [`examples/README.md`](examples/README.md).
 
 ## Architecture
 
 ```text
-client ──▶ LiteLLM A :4001 ──▶ bridge ──App Server──▶ Agent A
-client ──▶ LiteLLM B :4002 ──▶ bridge ──App Server──▶ Agent B
-client ──▶ LiteLLM Reference :4003 ──A2A──▶ Python reference agent
+client ──▶ agentgateway :4000 ──┬──▶ bridge ──App Server──▶ Agent A
+                               ├──▶ bridge ──App Server──▶ Agent B
+                               └──A2A──▶ Python reference agent
 
-Agent A ──a2a_invoke──▶ LiteLLM B ──A2A──▶ Agent B
-Agent B ──a2a_invoke──▶ LiteLLM A ──A2A──▶ Agent A
-Agent A ──a2a_invoke──▶ LiteLLM Reference ──A2A──▶ Python reference agent
+Agent A ──a2a_invoke──▶ agentgateway ──A2A──▶ Agent B
+Agent B ──a2a_invoke──▶ agentgateway ──A2A──▶ Agent A
+Agent A ──a2a_invoke──▶ agentgateway ──A2A──▶ Python reference agent
 ```
 
-The seven services are:
+The five services are:
 
 - `agent-a`: Letta Code 0.30.25 App Server with a local backend.
 - `agent-b`: an independently persisted local Letta backend.
 - `bridge`: exposes a separate Agent Card and A2A endpoint for each Letta runtime, and registers the controller-owned `a2a_invoke` tool on both runtimes.
 - `reference-agent`: a non-Letta, non-LLM fixture built with the official Python `a2a-sdk`. Its exact commands exercise echo, context continuity, failure, delay, and cancellation.
-- `litellm-a`, `litellm-b`, and `litellm-reference`: identical LiteLLM 1.97.0 gateways, pinned by OCI digest, with config-defined A2A agents and no database.
+- `agentgateway`: one agentgateway v1.5.0 process, pinned by OCI digest, with path-based A2A routes, strict lab-key authentication, Agent Card rewriting, structured A2A logs, and a loopback UI.
 
-The separate gateway lanes are deliberate. Live testing showed that an active task routed through one LiteLLM 1.97.0 process could not safely re-enter that same process for a nested A2A send; the caller and callee waited on each other. Routing each target through its own lane breaks that lock cycle while keeping every agent-to-agent hop behind LiteLLM.
+The shared gateway is deliberate. The unchanged protocol and live cancellation matrix proved that nested calls can safely re-enter one agentgateway process. This replaces the three-process lane workaround previously required by LiteLLM 1.97.0. See [`docs/GATEWAY_DECISION.md`](docs/GATEWAY_DECISION.md).
 
 Clients also use A2A's asynchronous task mode: `returnImmediately: true`, then `GetTask` polling. The bridge rejects blocking requests that explicitly ask for `a2a_invoke`.
 
-Only the three LiteLLM ports are published to the host. The App Servers, bridge, and reference agent remain on the private Compose network.
+Only the A2A gateway and UI ports are published to host loopback. The App Servers, bridge, and reference agent remain on the private Compose network.
 
 ## Start the lab
 
@@ -46,7 +46,7 @@ docker compose ps
 Watch startup:
 
 ```bash
-docker compose logs -f agent-a agent-b bridge reference-agent litellm-a litellm-b litellm-reference
+docker compose logs -f agent-a agent-b bridge reference-agent agentgateway
 ```
 
 The bridge creates `Agent A` and `Agent B` on first startup. Agent identities, conversations, workspaces, and A2A context mappings live in separate named volumes.
@@ -88,7 +88,7 @@ Run the full live suite, including a provider-backed Letta tool-use turn:
 bun run test:integration
 ```
 
-Each invocation uses a unique Compose project and dynamically allocated loopback ports, then removes its containers and volumes. The protocol matrix deterministically proves reference-agent discovery, asynchronous `SendMessage`/`GetTask`, context continuation, terminal failure, and cancellation stability. The full suite adds live Letta Agent A → reference-agent delegation and proves that canceling the outer Letta task cancels its active remote child task. It therefore requires a working provider credential and remains subject to provider and model availability. The ordinary lab can remain running. Set `A2A_INTEGRATION_NO_MANAGE=1` to run the same assertions against an already-running lab on ports `4001` and `4003`.
+Each invocation uses a unique Compose project and dynamically allocated loopback ports, then removes its containers and volumes. The protocol matrix deterministically proves reference-agent discovery, asynchronous `SendMessage`/`GetTask`, context continuation, terminal failure, and cancellation stability. The full suite adds live Letta Agent A → reference-agent delegation and proves that canceling the outer Letta task cancels its active remote child task. It therefore requires a working provider credential and remains subject to provider and model availability. The ordinary lab can remain running. Set `A2A_INTEGRATION_NO_MANAGE=1` to run the same assertions against an already-running lab on port `4000`.
 
 ## Persistence and reset
 
@@ -114,7 +114,7 @@ The reset command permanently deletes both local agents, all lab conversations, 
 
 ## Current boundaries
 
-- A2A 1.0 JSON-RPC is the client-facing target. The bridge also advertises the SDK's 0.3 compatibility interface because LiteLLM 1.97.0 forwards task methods without preserving the `A2A-Version` header.
+- A2A 1.0 JSON-RPC is the tested client-facing target. The backends retain a 0.3 compatibility interface for broader client compatibility; agentgateway v1.5.0 does not itself parse or enforce `A2A-Version` or prove complete 1.0 conformance.
 - Text input and text artifacts are implemented first.
 - Streaming is not advertised yet; the bridge currently publishes one final text artifact per Letta turn.
 - Active task state uses each A2A SDK's in-memory task store. Letta conversation mappings survive bridge restarts, but historical `GetTask` records do not yet. The reference agent intentionally loses tasks and context memory on restart.
@@ -123,6 +123,8 @@ The reset command permanently deletes both local agents, all lab conversations, 
 - Delegation is opt-in per turn: the request must explicitly mention `a2a_invoke`. Nested calls carry a hop count, and `MAX_A2A_HOPS=1` prevents accidental agent ping-pong loops. The caller-supplied hop metadata is a loop guard, not an authentication boundary.
 - Canceling an outer Letta task aborts active outbound A2A polling, sends a bounded best-effort `CancelTask` to an accepted remote child, and then aborts the local App Server turn. Tasks canceled while waiting on a conversation lock never start a Letta runtime.
 - Letta turns run in `unrestricted` permission mode because the headless App Server has no human approval channel. The per-turn allowlist is empty for ordinary calls and contains only the scoped, controller-owned `a2a_invoke` tool for explicit delegation requests.
-- Default credentials are fixed lab-only values and all three gateway ports bind to loopback. Do not reuse this Compose file unchanged for a shared or production environment.
+- The A2A listener enforces a fixed lab-only API key. That policy is not yet declared in the proxied backend Agent Cards; aligning advertised security is a later example.
+- Agentgateway emits useful A2A telemetry to structured stdout. Its UI log search returned no stored A2A rows during evaluation, so this lab does not treat the UI as an A2A audit store.
+- Default credentials are fixed lab-only values and both published ports bind to loopback. Do not reuse this Compose file unchanged for a shared or production environment.
 
 These boundaries keep the experiment focused on discovery, gateway routing, persistent conversation continuity, cancellation, genuine bidirectional Letta delegation, and cross-language interoperability with an independently deployed agent built on the official Python A2A SDK.

@@ -7,11 +7,11 @@ One A2A client can call agents implemented with different runtimes. Both calls u
 ## Message flow
 
 ```text
-client ──lane :4001, target agent-a──────────▶ bridge ──▶ Letta App Server
-client ──lane :4003, target reference-agent──▶ independent A2A agent
+client ──agentgateway :4000, target agent-a──────────▶ bridge ──▶ Letta App Server
+client ──agentgateway :4000, target reference-agent──▶ independent A2A agent
 ```
 
-Each LiteLLM lane loads the same target catalog. The client deliberately chooses a different gateway process for each target so a nested delegation never re-enters the process serving its outer request.
+One path-routed agentgateway process serves every target. The live integration test proves that nested delegation can safely re-enter this same process.
 
 ## Run it
 
@@ -50,7 +50,7 @@ The `task.id`, `contextId`, message ID, and artifact ID are generated per reques
 
 ```bash
 docker compose logs -f --since=0s \
-  litellm-a litellm-reference bridge agent-a reference-agent
+  agentgateway bridge agent-a reference-agent
 ```
 
 The Letta path starts a Letta App Server runtime. The external path is handled directly by the independent A2A server. Both look the same to the client.

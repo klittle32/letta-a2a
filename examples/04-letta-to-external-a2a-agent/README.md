@@ -10,10 +10,10 @@ The external fixture in this repository is written in Python, but that language 
 
 ```text
 client
-  └──▶ LiteLLM A
+  └──▶ agentgateway
         └──▶ Letta bridge ──▶ Agent A
                                └── a2a_invoke
-                                    └──▶ LiteLLM Reference
+                                    └──▶ agentgateway
                                           └──▶ external A2A agent
                                     ◀── completed artifact
         ◀──────────────────── Letta's final response
@@ -48,14 +48,14 @@ There are two A2A tasks: the outer task addressed to Letta and the child task ad
 
 ```bash
 docker compose logs -f --since=0s \
-  litellm-a litellm-reference bridge agent-a reference-agent
+  agentgateway bridge agent-a reference-agent
 ```
 
 The important bridge lines are:
 
 ```text
 [agent-a] app-server event external_tool_call_request
-[agent-a] invoking reference-agent through http://litellm-reference:4000
+[agent-a] invoking reference-agent through http://agentgateway:4000
 [agent-a] received A2A result from reference-agent
 ```
 
