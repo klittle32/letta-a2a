@@ -18,7 +18,12 @@ client ◀─artifact: CONTEXT_OK───────────── externa
 Start the shared lab, then save the context returned by the first task:
 
 ```bash
-docker compose up --build -d
+test -f .env || cp .env.example .env
+nvim .env
+set -a
+source .env
+set +a
+docker compose up --build -d --wait
 
 context_id=$(
   node scripts/smoke-a2a.mjs reference-agent \

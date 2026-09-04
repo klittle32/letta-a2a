@@ -48,7 +48,7 @@ services:
         "9000",
       ]
     environment:
-      OAUTH_ISSUER: http://127.0.0.1:${OAUTH_PORT:-9000}
+      OAUTH_ISSUER: http://127.0.0.1:${OAUTH_PORT:-9001}
       OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-operator-client}
       OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-operator-client-secret}
       OAUTH_BRIDGE_CLIENT_ID: ${OAUTH_BRIDGE_CLIENT_ID:-bridge-client}
@@ -64,7 +64,7 @@ services:
       OAUTH_TOKEN_TTL_SECONDS: ${OAUTH_TOKEN_TTL_SECONDS:-60}
     networks: [a2a-lab]
     ports:
-      - "127.0.0.1:${OAUTH_PORT:-9000}:9000"
+      - "127.0.0.1:${OAUTH_PORT:-9001}:9000"
     healthcheck:
       test:
         [
@@ -106,7 +106,7 @@ services:
       LETTA_TEST_MODEL: ${LETTA_TEST_MODEL:-openai/gpt-4.1-nano}
       A2A_GATEWAY_URLS: '{"agent-a":"http://agentgateway:4000","agent-b":"http://agentgateway:4000","reference-agent":"http://agentgateway:4000"}'
       OAUTH_TOKEN_URL: http://auth-server:9000/token
-      OAUTH_PUBLIC_BASE_URL: http://127.0.0.1:${OAUTH_PORT:-9000}
+      OAUTH_PUBLIC_BASE_URL: http://127.0.0.1:${OAUTH_PORT:-9001}
       OAUTH_CLIENT_ID: ${OAUTH_BRIDGE_CLIENT_ID:-bridge-client}
       OAUTH_CLIENT_SECRET: ${OAUTH_BRIDGE_CLIENT_SECRET:-bridge-client-secret}
       OAUTH_SCOPE: a2a.discover a2a.invoke
@@ -148,7 +148,7 @@ services:
       PUBLIC_BASE_URL: http://reference-agent:8090
       A2A_LETTA_URL: http://agentgateway:4000/a2a/agent-a
       OAUTH_TOKEN_URL: http://auth-server:9000/token
-      OAUTH_PUBLIC_BASE_URL: http://127.0.0.1:${OAUTH_PORT:-9000}
+      OAUTH_PUBLIC_BASE_URL: http://127.0.0.1:${OAUTH_PORT:-9001}
       OAUTH_CLIENT_ID: ${OAUTH_REFERENCE_CLIENT_ID:-reference-agent-client}
       OAUTH_CLIENT_SECRET: ${OAUTH_REFERENCE_CLIENT_SECRET:-reference-agent-client-secret}
       OAUTH_SCOPE: a2a.discover a2a.invoke
@@ -211,7 +211,7 @@ services:
     restart: unless-stopped
     command: ["-f", "/config.yaml"]
     environment:
-      OAUTH_ISSUER: http://127.0.0.1:${OAUTH_PORT:-9000}
+      OAUTH_ISSUER: http://127.0.0.1:${OAUTH_PORT:-9001}
     volumes:
       - ./agentgateway/config.yaml:/config.yaml:ro
     networks: [a2a-lab]

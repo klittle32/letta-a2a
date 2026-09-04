@@ -32,10 +32,10 @@ calling agent ── Authorization: Bearer <JWT> ──▶ agentgateway :4000
 
 ## Run it
 
-Start the current lab:
+Start the checked-out historical lab:
 
 ```bash
-cp .env.example .env
+test -f .env || cp .env.example .env
 nvim .env
 docker compose up --build -d --wait
 ```
@@ -52,7 +52,7 @@ TOKEN_RESPONSE="$(curl -fsS \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   --data-urlencode 'grant_type=client_credentials' \
   --data-urlencode 'scope=a2a.invoke' \
-  http://127.0.0.1:9000/token)"
+  "http://127.0.0.1:${OAUTH_PORT:-9000}/token")"
 
 export ACCESS_TOKEN="$(jq -r '.access_token' <<<"$TOKEN_RESPONSE")"
 jq '{token_type, expires_in, scope}' <<<"$TOKEN_RESPONSE"
@@ -70,7 +70,7 @@ console.log(JSON.stringify(claims, null, 2));
 Use the token to fetch the gateway-published Agent Card:
 
 ```bash
-CARD_URL=http://127.0.0.1:4000/a2a/reference-agent/.well-known/agent-card.json
+CARD_URL="http://127.0.0.1:${A2A_GATEWAY_PORT:-4000}/a2a/reference-agent/.well-known/agent-card.json"
 curl -fsS \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   "$CARD_URL" \

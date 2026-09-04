@@ -22,7 +22,7 @@ const gatewayUiPort =
 const oauthPort =
   process.env.A2A_INTEGRATION_OAUTH_PORT ??
   process.env.OAUTH_PORT ??
-  (managed ? await findFreePort() : "9000");
+  (managed ? await findFreePort() : "9001");
 const pushReceiverPort =
   process.env.A2A_INTEGRATION_PUSH_RECEIVER_PORT ??
   process.env.PUSH_RECEIVER_PORT ??

@@ -24,7 +24,12 @@ client
 Start the shared lab:
 
 ```bash
-docker compose up --build -d
+test -f .env || cp .env.example .env
+nvim .env
+set -a
+source .env
+set +a
+docker compose up --build -d --wait
 ```
 
 Ask Letta to delegate:

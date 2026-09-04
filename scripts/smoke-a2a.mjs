@@ -2,11 +2,10 @@
 
 import { randomUUID } from "node:crypto";
 
+import { resolveSmokeEndpoints } from "./smoke-config.mjs";
+
 const target = process.argv[2] ?? "agent-a";
-const baseUrl =
-  process.env.A2A_GATEWAY_URL ?? "http://127.0.0.1:4000";
-const oauthTokenUrl =
-  process.env.OAUTH_TOKEN_URL ?? "http://127.0.0.1:9000/token";
+const { baseUrl, oauthTokenUrl } = resolveSmokeEndpoints();
 const oauthClientId = process.env.OAUTH_CLIENT_ID ?? "operator-client";
 const oauthClientSecret =
   process.env.OAUTH_CLIENT_SECRET ?? "operator-client-secret";

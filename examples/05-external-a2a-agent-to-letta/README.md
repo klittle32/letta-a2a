@@ -27,7 +27,12 @@ Both directions cross the same shared gateway process. The external agent never 
 Start the shared lab:
 
 ```bash
-docker compose up --build -d
+test -f .env || cp .env.example .env
+nvim .env
+set -a
+source .env
+set +a
+docker compose up --build -d --wait
 ```
 
 Ask the external agent to delegate to Letta:

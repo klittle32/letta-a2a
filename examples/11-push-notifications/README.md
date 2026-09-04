@@ -26,7 +26,7 @@ caller ◀── observes terminal hint ───────────── 
 Start the lab and load its disposable credentials:
 
 ```bash
-cp .env.example .env
+test -f .env || cp .env.example .env
 nvim .env
 docker compose up --build -d --wait
 
@@ -39,7 +39,7 @@ export ACCESS_TOKEN="$(curl -fsS \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   --data-urlencode 'grant_type=client_credentials' \
   --data-urlencode 'scope=a2a.discover a2a.invoke' \
-  http://127.0.0.1:${OAUTH_PORT:-9000}/token \
+  "http://127.0.0.1:${OAUTH_PORT:-9001}/token" \
   | jq -r '.access_token')"
 ```
 
@@ -48,7 +48,7 @@ Confirm that push notifications are advertised:
 ```bash
 curl -fsS \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
-  http://127.0.0.1:${A2A_GATEWAY_PORT:-4000}/a2a/reference-agent/.well-known/agent-card.json \
+  "http://127.0.0.1:${A2A_GATEWAY_PORT:-4000}/a2a/reference-agent/.well-known/agent-card.json" \
   | jq '.capabilities.pushNotifications'
 ```
 
@@ -83,7 +83,7 @@ RESPONSE="$(curl -fsS \
         }
       }
     }')" \
-  http://127.0.0.1:${A2A_GATEWAY_PORT:-4000}/a2a/reference-agent)"
+  "http://127.0.0.1:${A2A_GATEWAY_PORT:-4000}/a2a/reference-agent")"
 
 TASK_ID="$(jq -r '.result.id' <<<"$RESPONSE")"
 printf 'accepted task: %s\n' "$TASK_ID"
@@ -119,7 +119,7 @@ curl -fsS \
     method: "GetTask",
     params: {id: $task_id}
   }')" \
-  http://127.0.0.1:${A2A_GATEWAY_PORT:-4000}/a2a/reference-agent \
+  "http://127.0.0.1:${A2A_GATEWAY_PORT:-4000}/a2a/reference-agent" \
   | jq '{state: .result.status.state, text: .result.artifacts[0].parts[0].text}'
 ```
 

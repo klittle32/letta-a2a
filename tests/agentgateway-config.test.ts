@@ -77,8 +77,14 @@ describe("primary agentgateway topology", () => {
     expect(service.image).toBe(EXPECTED_IMAGE);
     expect(service.command).toEqual(["-f", "/config.yaml"]);
     expect(service.environment.OAUTH_ISSUER).toBe(
-      "http://127.0.0.1:${OAUTH_PORT:-9000}",
+      "http://127.0.0.1:${OAUTH_PORT:-9001}",
     );
+    expect(compose.services.bridge.environment.OAUTH_PUBLIC_BASE_URL).toBe(
+      "http://127.0.0.1:${OAUTH_PORT:-9001}",
+    );
+    expect(
+      compose.services["reference-agent"].environment.OAUTH_PUBLIC_BASE_URL,
+    ).toBe("http://127.0.0.1:${OAUTH_PORT:-9001}");
     expect(service.ports).toEqual([
       "127.0.0.1:${A2A_GATEWAY_PORT:-4000}:4000",
       "127.0.0.1:${A2A_GATEWAY_UI_PORT:-4090}:4090",
@@ -156,10 +162,13 @@ describe("primary agentgateway topology", () => {
       "9000",
     ]);
     expect(authServer.ports).toEqual([
-      "127.0.0.1:${OAUTH_PORT:-9000}:9000",
+      "127.0.0.1:${OAUTH_PORT:-9001}:9000",
     ]);
     expect(authServer.environment.OAUTH_CLIENT_ID).toBe(
       "${OAUTH_CLIENT_ID:-operator-client}",
+    );
+    expect(authServer.environment.OAUTH_ISSUER).toBe(
+      "http://127.0.0.1:${OAUTH_PORT:-9001}",
     );
     expect(authServer.environment.OAUTH_BRIDGE_CLIENT_ID).toBe(
       "${OAUTH_BRIDGE_CLIENT_ID:-bridge-client}",
@@ -172,6 +181,9 @@ describe("primary agentgateway topology", () => {
     );
     expect(authServer.environment.OAUTH_DENIED_CLIENT_ID).toBe(
       "${OAUTH_DENIED_CLIENT_ID:-denied-invoker-client}",
+    );
+    expect(readFileSync(".env.example", "utf8")).toContain(
+      "\nOAUTH_PORT=9001\n",
     );
   });
 

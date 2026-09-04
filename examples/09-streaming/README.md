@@ -25,7 +25,7 @@ A2A client ── POST SendStreamingMessage ──▶ agentgateway ──▶ A2A
 Start the current lab and load its disposable operator credentials:
 
 ```bash
-cp .env.example .env
+test -f .env || cp .env.example .env
 nvim .env
 docker compose up --build -d --wait
 
@@ -42,7 +42,7 @@ export ACCESS_TOKEN="$(curl -fsS \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   --data-urlencode 'grant_type=client_credentials' \
   --data-urlencode 'scope=a2a.discover a2a.invoke' \
-  http://127.0.0.1:9000/token \
+  "http://127.0.0.1:${OAUTH_PORT:-9001}/token" \
   | jq -r '.access_token')"
 ```
 
@@ -51,7 +51,7 @@ Confirm that the gateway-published card advertises streaming:
 ```bash
 curl -fsS \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
-  http://127.0.0.1:4000/a2a/reference-agent/.well-known/agent-card.json \
+  "http://127.0.0.1:${A2A_GATEWAY_PORT:-4000}/a2a/reference-agent/.well-known/agent-card.json" \
   | jq '.capabilities.streaming'
 ```
 
@@ -75,7 +75,7 @@ curl -NfsS \
       }
     }
   }' \
-  http://127.0.0.1:4000/a2a/reference-agent
+  "http://127.0.0.1:${A2A_GATEWAY_PORT:-4000}/a2a/reference-agent"
 ```
 
 Run the deterministic gateway matrix and the provider-backed Letta stream:

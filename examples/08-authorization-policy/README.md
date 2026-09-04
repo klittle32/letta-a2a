@@ -44,10 +44,10 @@ JWT ──▶ agentgateway
 
 ## Run it
 
-Start the current lab:
+Start the checked-out historical lab:
 
 ```bash
-cp .env.example .env
+test -f .env || cp .env.example .env
 nvim .env
 docker compose up --build -d --wait
 
@@ -65,7 +65,7 @@ token() {
     -H 'Content-Type: application/x-www-form-urlencoded' \
     --data-urlencode 'grant_type=client_credentials' \
     --data-urlencode "scope=$3" \
-    http://127.0.0.1:9000/token \
+    "http://127.0.0.1:${OAUTH_PORT:-9000}/token" \
     | jq -r '.access_token'
 }
 
@@ -97,7 +97,7 @@ done
 Compare discovery access:
 
 ```bash
-CARD_URL=http://127.0.0.1:4000/a2a/reference-agent/.well-known/agent-card.json
+CARD_URL="http://127.0.0.1:${A2A_GATEWAY_PORT:-4000}/a2a/reference-agent/.well-known/agent-card.json"
 
 curl -sS -o /dev/null -w 'observer card: %{http_code}\n' \
   -H "Authorization: Bearer $OBSERVER_TOKEN" "$CARD_URL"
@@ -109,7 +109,7 @@ curl -sS -o /dev/null -w 'operator without discover: %{http_code}\n' \
 Compare invocation access using a harmless request for a nonexistent task:
 
 ```bash
-RPC_URL=http://127.0.0.1:4000/a2a/reference-agent
+RPC_URL="http://127.0.0.1:${A2A_GATEWAY_PORT:-4000}/a2a/reference-agent"
 RPC_BODY='{"jsonrpc":"2.0","id":"authz-demo","method":"GetTask","params":{"id":"does-not-exist"}}'
 
 for pair in "observer:$OBSERVER_TOKEN" "denied:$DENIED_TOKEN" "operator:$OPERATOR_TOKEN"; do

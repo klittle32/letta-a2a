@@ -9,7 +9,7 @@ The completed proof and limits are summarized in [`docs/CONCLUSIONS.md`](docs/CO
 ## Architecture
 
 ```text
-client ──client credentials──▶ authorization server :9000
+client ──client credentials──▶ authorization server :9001
        ◀──── short-lived JWT ─────────────────────────────┘
 
 client ──JWT──▶ agentgateway :4000 ──┬──▶ bridge ──App Server──▶ Agent A
@@ -49,13 +49,15 @@ Only the OAuth, A2A gateway, UI, and callback-fixture ports are published to hos
 ## Start the lab
 
 ```bash
-cp .env.example .env
+test -f .env || cp .env.example .env
 nvim .env
 docker compose up --build -d --wait
 docker compose ps
 ```
 
 `OPENAI_API_KEY` is the only value without a working local default. `LETTA_TEST_MODEL` defaults to `openai/gpt-4.1-nano`; change it if that handle is not available to the supplied account. The remaining values in `.env.example` control lab-only credentials, published ports, token lifetime, turn timeout, and hop limit.
+
+The OAuth host port defaults to `9001` because local PHP-FPM installations commonly occupy `9000`. If Compose reports another bind conflict, change the corresponding published port in `.env`; container-internal ports remain unchanged.
 
 Watch startup:
 
@@ -109,7 +111,7 @@ Run the full live suite, including a provider-backed Letta tool-use turn:
 bun run test:integration
 ```
 
-Each invocation uses a unique Compose project and dynamically allocated loopback ports, then removes its containers and volumes. The protocol matrix first proves authentication and caller-aware authorization, then exercises Agent Card discovery, authenticated duplicate-safe reference-agent push delivery, ordered SSE chunks, stream failure, disconnect persistence, asynchronous `SendMessage`/`GetTask`, context continuation, terminal failure, and cancellation stability. The full suite adds the corresponding Letta push path, safe Letta assistant-text streaming, live delegation in both directions through separate bridge and reference-agent identities, and outer-to-child cancellation. It requires a working provider credential and remains subject to provider and model availability. The ordinary lab can remain running. Set `A2A_INTEGRATION_NO_MANAGE=1` to run the core assertions against an already-running lab on ports `4000`, `9000`, and `8100`; only the stale-token probe requires the managed integration fixture.
+Each invocation uses a unique Compose project and dynamically allocated loopback ports, then removes its containers and volumes. The protocol matrix first proves authentication and caller-aware authorization, then exercises Agent Card discovery, authenticated duplicate-safe reference-agent push delivery, ordered SSE chunks, stream failure, disconnect persistence, asynchronous `SendMessage`/`GetTask`, context continuation, terminal failure, and cancellation stability. The full suite adds the corresponding Letta push path, safe Letta assistant-text streaming, live delegation in both directions through separate bridge and reference-agent identities, and outer-to-child cancellation. It requires a working provider credential and remains subject to provider and model availability. The ordinary lab can remain running. Set `A2A_INTEGRATION_NO_MANAGE=1` to run the core assertions against an already-running lab on ports `4000`, `9001`, and `8100`; only the stale-token probe requires the managed integration fixture.
 
 ## Persistence and reset
 

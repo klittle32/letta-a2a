@@ -23,7 +23,12 @@ client ◀──────────── both tasks remain TASK_STATE_CANC
 Observe a deterministic failure directly:
 
 ```bash
-docker compose up --build -d
+test -f .env || cp .env.example .env
+nvim .env
+set -a
+source .env
+set +a
+docker compose up --build -d --wait
 
 if output=$(node scripts/smoke-a2a.mjs reference-agent \
   "fail EXPECTED_FAILURE" 2>&1); then

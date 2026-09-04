@@ -20,9 +20,18 @@ One agentgateway process routes each public path to the corresponding backend an
 Start the shared lab from the repository root:
 
 ```bash
-docker compose up --build -d
+test -f .env || cp .env.example .env
+nvim .env
+
+set -a
+source .env
+set +a
+
+docker compose up --build -d --wait
 docker compose ps
 ```
+
+`OAUTH_PORT` defaults to `9001` because PHP-FPM commonly occupies `9000`. If `--wait` reports a bind conflict, choose another free port in `.env`; every command below honors the configured host ports.
 
 Exchange the default disposable client credentials once for these discovery requests:
 
@@ -32,7 +41,7 @@ export ACCESS_TOKEN="$(curl -fsS \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   --data-urlencode 'grant_type=client_credentials' \
   --data-urlencode 'scope=a2a.discover' \
-  http://127.0.0.1:9000/token \
+  "http://127.0.0.1:${OAUTH_PORT:-9001}/token" \
   | jq -r '.access_token')"
 ```
 
@@ -41,7 +50,7 @@ Fetch the Letta agent's card:
 ```bash
 curl -sS \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
-  http://127.0.0.1:4000/a2a/agent-a/.well-known/agent-card.json \
+  "http://127.0.0.1:${A2A_GATEWAY_PORT:-4000}/a2a/agent-a/.well-known/agent-card.json" \
   | jq
 ```
 
@@ -50,13 +59,13 @@ Fetch the external agent's card:
 ```bash
 curl -sS \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
-  http://127.0.0.1:4000/a2a/reference-agent/.well-known/agent-card.json \
+  "http://127.0.0.1:${A2A_GATEWAY_PORT:-4000}/a2a/reference-agent/.well-known/agent-card.json" \
   | jq
 ```
 
 ## Expected result
 
-The cards should identify `Agent A` and `Independent Reference Agent`, advertise their capabilities and skills, and provide A2A 1.0 interface URLs under `http://127.0.0.1:4000/a2a/...`. No task or context ID is created.
+The cards should identify `Agent A` and `Independent Reference Agent`, advertise their capabilities and skills, and provide A2A 1.0 interface URLs under the configured gateway origin (by default `http://127.0.0.1:4000/a2a/...`). No task or context ID is created.
 
 ## Watch it happen
 

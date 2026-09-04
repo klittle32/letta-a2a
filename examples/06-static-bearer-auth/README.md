@@ -31,6 +31,9 @@ client ── valid Bearer token ─────▶ agentgateway
 Start the lab with a known disposable key:
 
 ```bash
+set -a
+source .env
+set +a
 export A2A_GATEWAY_KEY=sk-a2a-lab-only
 docker compose up --build -d --wait
 ```
@@ -38,7 +41,7 @@ docker compose up --build -d --wait
 Set the published reference-agent card URL:
 
 ```bash
-CARD_URL=http://127.0.0.1:4000/a2a/reference-agent/.well-known/agent-card.json
+CARD_URL="http://127.0.0.1:${A2A_GATEWAY_PORT:-4000}/a2a/reference-agent/.well-known/agent-card.json"
 ```
 
 No credential:
