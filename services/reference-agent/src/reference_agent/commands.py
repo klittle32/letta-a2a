@@ -4,7 +4,10 @@ from dataclasses import dataclass
 from enum import Enum
 
 
-USAGE = "usage: echo TEXT | remember TEXT | context | fail [TEXT] | slow SECONDS"
+USAGE = (
+    "usage: echo TEXT | remember TEXT | context | fail [TEXT] | "
+    "slow SECONDS | ask-letta TEXT"
+)
 
 
 class CommandKind(Enum):

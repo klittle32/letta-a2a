@@ -64,9 +64,7 @@ describe("primary agentgateway topology", () => {
     expect(service.volumes).toEqual([
       "./agentgateway/config.yaml:/config.yaml:ro",
     ]);
-    expect(service.depends_on).toEqual({
-      "reference-agent": { condition: "service_healthy" },
-    });
+    expect(service.depends_on).toBeUndefined();
 
     const gatewayUrls = JSON.parse(
       compose.services.bridge.environment.A2A_GATEWAY_URLS,
@@ -76,6 +74,12 @@ describe("primary agentgateway topology", () => {
       "agent-b": "http://agentgateway:4000",
       "reference-agent": "http://agentgateway:4000",
     });
+    expect(compose.services["reference-agent"].environment.A2A_LETTA_URL).toBe(
+      "http://agentgateway:4000/a2a/agent-a",
+    );
+    expect(compose.services["reference-agent"].environment.A2A_GATEWAY_KEY).toBe(
+      "${A2A_GATEWAY_KEY:-sk-a2a-lab-only}",
+    );
   });
 
   test("removes the temporary comparison layer and prior gateway configuration", () => {

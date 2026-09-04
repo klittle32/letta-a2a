@@ -91,6 +91,8 @@ services:
     restart: unless-stopped
     environment:
       PUBLIC_BASE_URL: http://reference-agent:8090
+      A2A_LETTA_URL: http://agentgateway:4000/a2a/agent-a
+      A2A_GATEWAY_KEY: ${A2A_GATEWAY_KEY:-sk-a2a-lab-only}
     networks: [a2a-lab]
     healthcheck:
       test:
@@ -114,9 +116,6 @@ services:
     volumes:
       - ./agentgateway/config.yaml:/config.yaml:ro
     networks: [a2a-lab]
-    depends_on:
-      reference-agent:
-        condition: service_healthy
     ports:
       - "127.0.0.1:${A2A_GATEWAY_PORT:-4000}:4000"
       - "127.0.0.1:${A2A_GATEWAY_UI_PORT:-4090}:4090"

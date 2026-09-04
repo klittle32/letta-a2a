@@ -24,11 +24,17 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from reference_agent.commands import CommandEngine, CommandKind, CommandResult
+from reference_agent.outbound import OfficialA2AClient, OutboundA2AClient
 
 
 class ReferenceAgentExecutor(AgentExecutor):
-    def __init__(self, engine: CommandEngine | None = None) -> None:
+    def __init__(
+        self,
+        engine: CommandEngine | None = None,
+        outbound_client: OutboundA2AClient | None = None,
+    ) -> None:
         self._engine = engine or CommandEngine()
+        self._outbound_client = outbound_client
         self._last_slow_task_id: str | None = None
         self._last_canceled_task_id: str | None = None
 
@@ -52,7 +58,11 @@ class ReferenceAgentExecutor(AgentExecutor):
         updater = TaskUpdater(event_queue, task_id, context_id)
         await updater.start_work()
         text = context.get_user_input().strip()
-        if text == "last-slow":
+        command, separator, argument = text.partition(" ")
+        argument = argument.strip()
+        if command == "ask-letta" and separator and argument:
+            result = await self._invoke_letta(argument)
+        elif text == "last-slow":
             result = CommandResult(
                 CommandKind.COMPLETE,
                 self._last_slow_task_id or "(none)",
@@ -83,6 +93,24 @@ class ReferenceAgentExecutor(AgentExecutor):
             last_chunk=True,
         )
         await updater.complete()
+
+    async def _invoke_letta(self, message: str) -> CommandResult:
+        if self._outbound_client is None:
+            return CommandResult(CommandKind.FAIL, "Letta delegation is not configured")
+        try:
+            remote = await self._outbound_client.invoke(message)
+        except Exception as error:
+            return CommandResult(
+                CommandKind.FAIL,
+                f"Agent A delegation failed: {error}",
+            )
+        if remote.state != "TASK_STATE_COMPLETED":
+            detail = remote.text or "no failure detail"
+            return CommandResult(
+                CommandKind.FAIL,
+                f"{remote.agent_name} {remote.state}: {detail}",
+            )
+        return CommandResult(CommandKind.COMPLETE, remote.text)
 
     async def cancel(
         self,
@@ -146,7 +174,19 @@ def build_agent_card(public_base_url: str) -> AgentCard:
                 ],
                 input_modes=["text/plain"],
                 output_modes=["text/plain"],
-            )
+            ),
+            AgentSkill(
+                id="letta-delegation",
+                name="Delegate to Letta",
+                description=(
+                    "Discover Agent A, send it an asynchronous A2A task, "
+                    "poll to completion, and return its text artifact."
+                ),
+                tags=["a2a", "letta", "delegation"],
+                examples=["ask-letta Reply with exactly hello"],
+                input_modes=["text/plain"],
+                output_modes=["text/plain"],
+            ),
         ],
     )
 
@@ -155,10 +195,23 @@ async def healthz(_request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
-def create_app(public_base_url: str) -> Starlette:
+def create_app(
+    public_base_url: str,
+    *,
+    outbound_client: OutboundA2AClient | None = None,
+) -> Starlette:
     card = build_agent_card(public_base_url)
+    if outbound_client is None:
+        outbound_client = OfficialA2AClient(
+            endpoint=os.environ.get(
+                "A2A_LETTA_URL",
+                "http://agentgateway:4000/a2a/agent-a",
+            ),
+            api_key=os.environ.get("A2A_GATEWAY_KEY", "sk-a2a-lab-only"),
+            expected_agent_name="Agent A",
+        )
     handler = DefaultRequestHandler(
-        agent_executor=ReferenceAgentExecutor(),
+        agent_executor=ReferenceAgentExecutor(outbound_client=outbound_client),
         task_store=InMemoryTaskStore(),
         agent_card=card,
     )
@@ -175,6 +228,4 @@ def create_app(public_base_url: str) -> Starlette:
     )
 
 
-app = create_app(
-    os.environ.get("PUBLIC_BASE_URL", "http://reference-agent:8090")
-)
+app = create_app(os.environ.get("PUBLIC_BASE_URL", "http://reference-agent:8090"))

@@ -45,6 +45,7 @@ try {
       "--wait",
       "--wait-timeout",
       "240",
+      "reference-agent",
       "agentgateway",
       ...(liveLetta ? ["bridge"] : []),
     ]);
@@ -148,6 +149,19 @@ async function runChecks() {
       `unexpected Letta delegation result: ${delegated.text}`,
     );
     passed("provider-backed Letta Agent A to independent reference agent");
+
+    const reverseDelegated = await reference.sendAndPoll(
+      "ask-letta Reply with exactly EXTERNAL_TO_LETTA_OK and nothing else.",
+    );
+    assert(
+      reverseDelegated.state.endsWith("COMPLETED"),
+      `external-to-Letta task ended as ${reverseDelegated.state}: ${reverseDelegated.statusText}`,
+    );
+    assert(
+      reverseDelegated.text === "EXTERNAL_TO_LETTA_OK",
+      `unexpected external-to-Letta result: ${reverseDelegated.text}`,
+    );
+    passed("independent reference agent to Letta Agent A delegation");
 
     const priorSlowTask = await reference.sendAndPoll("last-slow");
     const outer = await agentA.send(

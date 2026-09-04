@@ -16,6 +16,7 @@ client ──▶ agentgateway :4000 ──┬──▶ bridge ──App Server�
 Agent A ──a2a_invoke──▶ agentgateway ──A2A──▶ Agent B
 Agent B ──a2a_invoke──▶ agentgateway ──A2A──▶ Agent A
 Agent A ──a2a_invoke──▶ agentgateway ──A2A──▶ Python reference agent
+Python reference agent ──official A2A client──▶ agentgateway ──A2A──▶ Agent A
 ```
 
 The five services are:
@@ -23,7 +24,7 @@ The five services are:
 - `agent-a`: Letta Code 0.30.25 App Server with a local backend.
 - `agent-b`: an independently persisted local Letta backend.
 - `bridge`: exposes a separate Agent Card and A2A endpoint for each Letta runtime, and registers the controller-owned `a2a_invoke` tool on both runtimes.
-- `reference-agent`: a non-Letta, non-LLM fixture built with the official Python `a2a-sdk`. Its exact commands exercise echo, context continuity, failure, delay, and cancellation.
+- `reference-agent`: a non-Letta, non-LLM fixture built with the official Python `a2a-sdk`. Its exact commands exercise echo, context continuity, failure, delay, and cancellation; one narrow outbound command delegates to Agent A.
 - `agentgateway`: one agentgateway v1.5.0 process, pinned by OCI digest, with path-based A2A routes, strict lab-key authentication, Agent Card rewriting, structured A2A logs, and a loopback UI.
 
 The shared gateway is deliberate. The unchanged protocol and live cancellation matrix proved that nested calls can safely re-enter one agentgateway process. This replaces the three-process lane workaround previously required by LiteLLM 1.97.0. See [`docs/GATEWAY_DECISION.md`](docs/GATEWAY_DECISION.md).
@@ -59,6 +60,7 @@ Follow the numbered learning path in [`examples/`](examples/README.md). The read
 - `02` — [Basic messaging across two implementations](examples/02-basic-messaging/)
 - `03` — [Context continuation](examples/03-context-continuation/)
 - `04` — [Letta delegating to an external A2A agent](examples/04-letta-to-external-a2a-agent/)
+- `05` — [An external A2A agent delegating to Letta](examples/05-external-a2a-agent-to-letta/)
 - `10` — [Failure and cancellation](examples/10-failure-and-cancellation/)
 
 Every example uses this shared Compose stack and the reusable client in `scripts/smoke-a2a.mjs`. Planned examples appear only in the index until their behavior and documentation are ready.
@@ -74,7 +76,7 @@ bun run build
 docker compose config --quiet
 ```
 
-Unit tests cover configuration and gateway-route validation, protocol text mapping, durable A2A-context mappings, Agent Card construction, delegation hop policy, the outbound controller-owned tool request shape, and the reference agent's deterministic command surface.
+Unit tests cover configuration and gateway-route validation, protocol text mapping, durable A2A-context mappings, Agent Card construction, delegation hop policy, both outbound A2A client paths, and the reference agent's deterministic command surface.
 
 Run the deterministic protocol matrix without calling a model provider:
 
@@ -88,7 +90,7 @@ Run the full live suite, including a provider-backed Letta tool-use turn:
 bun run test:integration
 ```
 
-Each invocation uses a unique Compose project and dynamically allocated loopback ports, then removes its containers and volumes. The protocol matrix deterministically proves reference-agent discovery, asynchronous `SendMessage`/`GetTask`, context continuation, terminal failure, and cancellation stability. The full suite adds live Letta Agent A → reference-agent delegation and proves that canceling the outer Letta task cancels its active remote child task. It therefore requires a working provider credential and remains subject to provider and model availability. The ordinary lab can remain running. Set `A2A_INTEGRATION_NO_MANAGE=1` to run the same assertions against an already-running lab on port `4000`.
+Each invocation uses a unique Compose project and dynamically allocated loopback ports, then removes its containers and volumes. The protocol matrix deterministically proves reference-agent discovery, asynchronous `SendMessage`/`GetTask`, context continuation, terminal failure, and cancellation stability. The full suite adds live delegation in both directions between Letta Agent A and the reference agent, then proves that canceling an outer Letta task cancels its active remote child task. It therefore requires a working provider credential and remains subject to provider and model availability. The ordinary lab can remain running. Set `A2A_INTEGRATION_NO_MANAGE=1` to run the same assertions against an already-running lab on port `4000`.
 
 ## Persistence and reset
 

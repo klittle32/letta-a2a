@@ -9,7 +9,7 @@ The lab has answered the architectural question. Do not add more protocol machin
 ## What the lab proved
 
 - Two separately persisted Letta App Servers can call each other through A2A in both directions.
-- A non-Letta Python agent built on the official A2A SDK interoperates through the same shared gateway.
+- A non-Letta Python agent built on the official A2A SDK can both receive delegated work from Letta and initiate work against Letta through the same shared gateway.
 - Agent Cards, asynchronous `SendMessage`, `GetTask`, context continuation, terminal failure, and cancellation work through agentgateway v1.5.0.
 - Canceling an outer Letta task propagates to its accepted remote child task without releasing the same-conversation lock early or allowing conflicting terminal states.
 - Nested calls safely re-enter one agentgateway process, so target-specific gateway lanes are unnecessary.
@@ -25,7 +25,7 @@ The lab has answered the architectural question. Do not add more protocol machin
 
 ## Examples
 
-The progressive, observable demonstrations now live in [`examples/`](../examples/README.md). Start with Agent Card discovery and basic messaging, then continue through context and [Letta delegating to an external A2A agent](../examples/04-letta-to-external-a2a-agent/).
+The progressive, observable demonstrations now live in [`examples/`](../examples/README.md). Start with Agent Card discovery and basic messaging, then continue through context, [Letta delegating to an external A2A agent](../examples/04-letta-to-external-a2a-agent/), and the [external agent delegating back to Letta](../examples/05-external-a2a-agent-to-letta/).
 
 The examples intentionally use Docker on one host. Multi-host deployment is a networking and operations concern rather than part of this focused protocol reference.
 

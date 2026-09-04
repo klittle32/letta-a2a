@@ -15,13 +15,13 @@ def test_agent_card_advertises_only_implemented_protocols() -> None:
     ]
     assert card.capabilities.streaming is False
     assert card.supported_interfaces[0].url == "http://reference-agent:8090/"
+    delegation = next(skill for skill in card.skills if skill.id == "letta-delegation")
+    assert delegation.examples == ["ask-letta Reply with exactly hello"]
 
 
 def test_health_and_agent_card_routes() -> None:
     async def exercise_routes() -> None:
-        transport = httpx.ASGITransport(
-            app=create_app("http://reference-agent:8090")
-        )
+        transport = httpx.ASGITransport(app=create_app("http://reference-agent:8090"))
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://testserver",

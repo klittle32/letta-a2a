@@ -70,4 +70,4 @@ The delegation tool is exposed only for requests that explicitly ask for `a2a_in
 - Tool selection and the final Letta response are model-backed and not deterministic.
 - The external `echo` behavior is deterministic.
 - The target registry is static and only configured agents may be called.
-- The next interoperability feature is the reverse direction: an external A2A agent initiating a task against Letta.
+- The reverse direction is implemented separately in [Example 05](../05-external-a2a-agent-to-letta/).
