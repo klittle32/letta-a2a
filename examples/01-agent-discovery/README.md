@@ -28,10 +28,10 @@ Exchange the default disposable client credentials once for these discovery requ
 
 ```bash
 export ACCESS_TOKEN="$(curl -fsS \
-  -u "${OAUTH_CLIENT_ID:-a2a-lab-client}:${OAUTH_CLIENT_SECRET:-a2a-lab-client-secret}" \
+  -u "${OAUTH_CLIENT_ID:-operator-client}:${OAUTH_CLIENT_SECRET:-operator-client-secret}" \
   -H 'Content-Type: application/x-www-form-urlencoded' \
   --data-urlencode 'grant_type=client_credentials' \
-  --data-urlencode 'scope=a2a.invoke' \
+  --data-urlencode 'scope=a2a.discover' \
   http://127.0.0.1:9000/token \
   | jq -r '.access_token')"
 ```

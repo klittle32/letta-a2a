@@ -29,7 +29,7 @@ The six services are:
 - `bridge`: exposes a separate Agent Card and A2A endpoint for each Letta runtime, and registers the controller-owned `a2a_invoke` tool on both runtimes.
 - `reference-agent`: a non-Letta, non-LLM fixture built with the official Python `a2a-sdk`. Its exact commands exercise echo, context continuity, failure, delay, and cancellation; one narrow outbound command delegates to Agent A.
 - `auth-server`: a local-only OAuth client-credentials fixture with short-lived RSA-signed JWTs, metadata, and JWKS endpoints.
-- `agentgateway`: one agentgateway v1.5.0 process, pinned by OCI digest, with path-based A2A routes, strict JWT authentication, a required `a2a.invoke` scope, Agent Card rewriting, structured A2A logs, and a loopback UI.
+- `agentgateway`: one agentgateway v1.5.0 process, pinned by OCI digest, with path-based A2A routes, strict JWT authentication, caller-aware role/scope authorization, Agent Card rewriting, structured A2A logs, and a loopback UI.
 
 The shared gateway is deliberate. The unchanged protocol and live cancellation matrix proved that nested calls can safely re-enter one agentgateway process. This replaces the three-process lane workaround previously required by LiteLLM 1.97.0. See [`docs/GATEWAY_DECISION.md`](docs/GATEWAY_DECISION.md).
 
@@ -67,6 +67,7 @@ Follow the numbered learning path in [`examples/`](examples/README.md). The read
 - `05` — [An external A2A agent delegating to Letta](examples/05-external-a2a-agent-to-letta/)
 - `06` — [Static Bearer authentication](examples/06-static-bearer-auth/)
 - `07` — [OAuth client credentials](examples/07-oauth-client-credentials/)
+- `08` — [Authorization policy](examples/08-authorization-policy/)
 - `10` — [Failure and cancellation](examples/10-failure-and-cancellation/)
 
 Every example uses this shared Compose stack and the reusable client in `scripts/smoke-a2a.mjs`. Planned examples appear only in the index until their behavior and documentation are ready.
@@ -96,7 +97,7 @@ Run the full live suite, including a provider-backed Letta tool-use turn:
 bun run test:integration
 ```
 
-Each invocation uses a unique Compose project and dynamically allocated loopback ports, then removes its containers and volumes. The protocol matrix first exchanges client credentials and proves rejection of missing, malformed, wrong-signature, expired, and wrong-scope tokens. It then proves reference-agent discovery, asynchronous `SendMessage`/`GetTask`, context continuation, terminal failure, and cancellation stability. The full suite adds live delegation in both directions between Letta Agent A and the reference agent, then proves that canceling an outer Letta task cancels its active remote child task. It therefore requires a working provider credential and remains subject to provider and model availability. The ordinary lab can remain running. Set `A2A_INTEGRATION_NO_MANAGE=1` to run the core assertions against an already-running lab on ports `4000` and `9000`; the managed-only wrong-scope and stale-token probes use temporary test registrations that are not present in the ordinary stack.
+Each invocation uses a unique Compose project and dynamically allocated loopback ports, then removes its containers and volumes. The protocol matrix first exchanges client credentials and distinguishes authentication failures (`401`) from caller-aware authorization failures (`403`). It proves operator, observer, and denied-invoker decisions before exercising discovery, asynchronous `SendMessage`/`GetTask`, context continuation, terminal failure, and cancellation stability. The full suite adds live delegation in both directions through separate bridge and reference-agent identities, then proves that canceling an outer Letta task cancels its active remote child task. It therefore requires a working provider credential and remains subject to provider and model availability. The ordinary lab can remain running. Set `A2A_INTEGRATION_NO_MANAGE=1` to run the core assertions against an already-running lab on ports `4000` and `9000`; only the stale-token probe requires the managed integration fixture.
 
 ## Persistence and reset
 
@@ -131,9 +132,9 @@ The reset command permanently deletes both local agents, all lab conversations, 
 - Delegation is opt-in per turn: the request must explicitly mention `a2a_invoke`. Nested calls carry a hop count, and `MAX_A2A_HOPS=1` prevents accidental agent ping-pong loops. The caller-supplied hop metadata is a loop guard, not an authentication boundary.
 - Canceling an outer Letta task aborts active outbound A2A polling, sends a bounded best-effort `CancelTask` to an accepted remote child, and then aborts the local App Server turn. Tasks canceled while waiting on a conversation lock never start a Letta runtime.
 - Letta turns run in `unrestricted` permission mode because the headless App Server has no human approval channel. The per-turn allowlist is empty for ordinary calls and contains only the scoped, controller-owned `a2a_invoke` tool for explicit delegation requests.
-- The A2A listener validates short-lived OAuth JWTs against the local authorization server's issuer, audience, and JWKS. Both proxied Agent Cards declare the client-credentials flow and required `a2a.invoke` scope.
+- The A2A listener validates short-lived OAuth JWTs against the local authorization server's issuer, audience, and JWKS. Agent Card discovery requires `a2a.discover`; JSON-RPC invocation requires `a2a.invoke` plus an issuer-assigned `operator` or `agent` role.
 - Agentgateway emits useful A2A telemetry to structured stdout. Its UI log search returned no stored A2A rows during evaluation, so this lab does not treat the UI as an A2A audit store.
-- Every ordinary caller currently shares one disposable OAuth client identity. Caller-specific permissions remain Example 08 work; the current scope rule is intentionally universal.
+- The shell operator, bridge, reference agent, observer, and denied invoker use distinct disposable identities. The denied invoker intentionally has `a2a.invoke` but an untrusted role, proving that scope possession alone does not authorize a request.
 - The authorization server is an in-memory test fixture, and the lab uses plain HTTP on loopback. Default credentials are fixed lab-only values. Do not reuse this Compose file unchanged for a shared or production environment.
 
 These boundaries keep the experiment focused on discovery, gateway routing, persistent conversation continuity, cancellation, genuine bidirectional Letta delegation, and cross-language interoperability with an independently deployed agent built on the official Python A2A SDK.

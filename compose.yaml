@@ -49,11 +49,18 @@ services:
       ]
     environment:
       OAUTH_ISSUER: http://127.0.0.1:${OAUTH_PORT:-9000}
-      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-a2a-lab-client}
-      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-a2a-lab-client-secret}
+      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-operator-client}
+      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-operator-client-secret}
+      OAUTH_BRIDGE_CLIENT_ID: ${OAUTH_BRIDGE_CLIENT_ID:-bridge-client}
+      OAUTH_BRIDGE_CLIENT_SECRET: ${OAUTH_BRIDGE_CLIENT_SECRET:-bridge-client-secret}
+      OAUTH_REFERENCE_CLIENT_ID: ${OAUTH_REFERENCE_CLIENT_ID:-reference-agent-client}
+      OAUTH_REFERENCE_CLIENT_SECRET: ${OAUTH_REFERENCE_CLIENT_SECRET:-reference-agent-client-secret}
+      OAUTH_OBSERVER_CLIENT_ID: ${OAUTH_OBSERVER_CLIENT_ID:-observer-client}
+      OAUTH_OBSERVER_CLIENT_SECRET: ${OAUTH_OBSERVER_CLIENT_SECRET:-observer-client-secret}
+      OAUTH_DENIED_CLIENT_ID: ${OAUTH_DENIED_CLIENT_ID:-denied-invoker-client}
+      OAUTH_DENIED_CLIENT_SECRET: ${OAUTH_DENIED_CLIENT_SECRET:-denied-invoker-client-secret}
       OAUTH_STALE_CLIENT_SECRET: ${OAUTH_STALE_CLIENT_SECRET:-}
       OAUTH_AUDIENCE: letta-a2a-gateway
-      OAUTH_ALLOWED_SCOPES: ${OAUTH_ALLOWED_SCOPES:-a2a.invoke}
       OAUTH_TOKEN_TTL_SECONDS: ${OAUTH_TOKEN_TTL_SECONDS:-60}
     networks: [a2a-lab]
     ports:
@@ -100,9 +107,9 @@ services:
       A2A_GATEWAY_URLS: '{"agent-a":"http://agentgateway:4000","agent-b":"http://agentgateway:4000","reference-agent":"http://agentgateway:4000"}'
       OAUTH_TOKEN_URL: http://auth-server:9000/token
       OAUTH_PUBLIC_BASE_URL: http://127.0.0.1:${OAUTH_PORT:-9000}
-      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-a2a-lab-client}
-      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-a2a-lab-client-secret}
-      OAUTH_SCOPE: a2a.invoke
+      OAUTH_CLIENT_ID: ${OAUTH_BRIDGE_CLIENT_ID:-bridge-client}
+      OAUTH_CLIENT_SECRET: ${OAUTH_BRIDGE_CLIENT_SECRET:-bridge-client-secret}
+      OAUTH_SCOPE: a2a.discover a2a.invoke
       AGENT_DEFINITIONS: >-
         [{"key":"agent-a","displayName":"Agent A","appServerUrl":"ws://agent-a:4500","appServerToken":"${LETTA_APP_SERVER_TOKEN:-a2a-lab-app-server-token}"},{"key":"agent-b","displayName":"Agent B","appServerUrl":"ws://agent-b:4500","appServerToken":"${LETTA_APP_SERVER_TOKEN:-a2a-lab-app-server-token}"}]
     volumes:
@@ -138,9 +145,9 @@ services:
       A2A_LETTA_URL: http://agentgateway:4000/a2a/agent-a
       OAUTH_TOKEN_URL: http://auth-server:9000/token
       OAUTH_PUBLIC_BASE_URL: http://127.0.0.1:${OAUTH_PORT:-9000}
-      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-a2a-lab-client}
-      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-a2a-lab-client-secret}
-      OAUTH_SCOPE: a2a.invoke
+      OAUTH_CLIENT_ID: ${OAUTH_REFERENCE_CLIENT_ID:-reference-agent-client}
+      OAUTH_CLIENT_SECRET: ${OAUTH_REFERENCE_CLIENT_SECRET:-reference-agent-client-secret}
+      OAUTH_SCOPE: a2a.discover a2a.invoke
     networks: [a2a-lab]
     healthcheck:
       test:

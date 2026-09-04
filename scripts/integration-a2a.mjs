@@ -25,10 +25,23 @@ const oauthPort =
   (managed ? await findFreePort() : "9000");
 const oauthTokenUrl = `http://127.0.0.1:${oauthPort}/token`;
 const oauthIssuer = `http://127.0.0.1:${oauthPort}`;
-const oauthClientId = process.env.OAUTH_CLIENT_ID ?? "a2a-lab-client";
+const oauthClientId = process.env.OAUTH_CLIENT_ID ?? "operator-client";
 const oauthClientSecret =
-  process.env.OAUTH_CLIENT_SECRET ?? "a2a-lab-client-secret";
-const oauthScope = "a2a.invoke";
+  process.env.OAUTH_CLIENT_SECRET ?? "operator-client-secret";
+const oauthScope = "a2a.discover a2a.invoke";
+const discoverScope = "a2a.discover";
+const invokeScope = "a2a.invoke";
+const observerClientId = process.env.OAUTH_OBSERVER_CLIENT_ID ?? "observer-client";
+const observerClientSecret =
+  process.env.OAUTH_OBSERVER_CLIENT_SECRET ?? "observer-client-secret";
+const deniedClientId =
+  process.env.OAUTH_DENIED_CLIENT_ID ?? "denied-invoker-client";
+const deniedClientSecret =
+  process.env.OAUTH_DENIED_CLIENT_SECRET ?? "denied-invoker-client-secret";
+const bridgeClientSecret =
+  process.env.OAUTH_BRIDGE_CLIENT_SECRET ?? "bridge-client-secret";
+const referenceClientSecret =
+  process.env.OAUTH_REFERENCE_CLIENT_SECRET ?? "reference-agent-client-secret";
 const issuedTokens = new Set();
 const tokenProvider = createTokenProvider({
   tokenUrl: oauthTokenUrl,
@@ -44,9 +57,12 @@ const composeEnv = {
   OAUTH_PORT: oauthPort,
   OAUTH_CLIENT_ID: oauthClientId,
   OAUTH_CLIENT_SECRET: oauthClientSecret,
+  OAUTH_OBSERVER_CLIENT_ID: observerClientId,
+  OAUTH_OBSERVER_CLIENT_SECRET: observerClientSecret,
+  OAUTH_DENIED_CLIENT_ID: deniedClientId,
+  OAUTH_DENIED_CLIENT_SECRET: deniedClientSecret,
   ...(managed
     ? {
-        OAUTH_ALLOWED_SCOPES: "a2a.invoke diagnostic",
         OAUTH_STALE_CLIENT_SECRET: "stale-client-secret",
       }
     : {}),
@@ -263,8 +279,12 @@ function assertGatewayCard(card, expectedName, target) {
     `${target} Agent Card advertises the wrong token URL`,
   );
   assert(
-    clientCredentials.scopes?.[oauthScope],
-    `${target} Agent Card lost the ${oauthScope} scope`,
+    clientCredentials.scopes?.[discoverScope],
+    `${target} Agent Card lost the ${discoverScope} scope`,
+  );
+  assert(
+    clientCredentials.scopes?.[invokeScope],
+    `${target} Agent Card lost the ${invokeScope} scope`,
   );
   assert(
     oauth.oauth2MetadataUrl ===
@@ -274,7 +294,7 @@ function assertGatewayCard(card, expectedName, target) {
   assert(
     card.securityRequirements?.some(
       (requirement) =>
-        requirement.schemes?.a2aOAuth?.list?.includes(oauthScope),
+        requirement.schemes?.a2aOAuth?.list?.includes(invokeScope),
     ),
     `${target} Agent Card does not require the advertised OAuth scope`,
   );
@@ -325,6 +345,7 @@ async function assertGatewayAuthentication() {
     `unexpected token audience: ${claims.aud}`,
   );
   assert(claims.sub === oauthClientId, `unexpected token subject: ${claims.sub}`);
+  assert(claims.role === "operator", `unexpected token role: ${claims.role}`);
   assert(claims.scope === oauthScope, `unexpected token scope: ${claims.scope}`);
   assert(
     Number(claims.exp) > Math.floor(Date.now() / 1_000),
@@ -339,28 +360,6 @@ async function assertGatewayAuthentication() {
     wrongSignature.status === 401,
     `wrong JWT signature returned ${wrongSignature.status}, expected 401`,
   );
-
-  if (managed) {
-    const wrongScopeToken = await requestAccessToken({ scope: "diagnostic" });
-    const wrongScope = await fetch(cardUrl, {
-      headers: { Authorization: `Bearer ${wrongScopeToken}` },
-    });
-    assert(
-      wrongScope.status === 403,
-      `wrong OAuth scope returned ${wrongScope.status}, expected 403`,
-    );
-
-    const multiScopeToken = await requestAccessToken({
-      scope: "diagnostic a2a.invoke",
-    });
-    const multiScope = await fetch(cardUrl, {
-      headers: { Authorization: `Bearer ${multiScopeToken}` },
-    });
-    assert(
-      multiScope.status === 200,
-      `token containing the required scope returned ${multiScope.status}, expected 200`,
-    );
-  }
 
   const invalidClient = await fetch(oauthTokenUrl, {
     method: "POST",
@@ -421,6 +420,76 @@ async function assertGatewayAuthentication() {
     validRpcPayload.error,
     "valid authentication probe unexpectedly found a nonexistent task",
   );
+
+  const operatorInvokeOnly = await requestAccessToken({ scope: invokeScope });
+  const operatorCannotDiscoverWithoutScope = await fetch(cardUrl, {
+    headers: { Authorization: `Bearer ${operatorInvokeOnly}` },
+  });
+  assert(
+    operatorCannotDiscoverWithoutScope.status === 403,
+    `operator without discovery scope returned ${operatorCannotDiscoverWithoutScope.status}, expected 403`,
+  );
+
+  const observerToken = await requestAccessToken({
+    clientId: observerClientId,
+    clientSecret: observerClientSecret,
+    scope: discoverScope,
+  });
+  const observerClaims = decodeJwtClaims(observerToken);
+  assert(observerClaims.sub === observerClientId, "observer token has the wrong subject");
+  assert(observerClaims.role === "observer", "observer token has the wrong role");
+  const observerCard = await fetch(cardUrl, {
+    headers: { Authorization: `Bearer ${observerToken}` },
+  });
+  assert(
+    observerCard.status === 200,
+    `observer discovery returned ${observerCard.status}, expected 200`,
+  );
+  const observerRpc = await fetch(rpcUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${observerToken}`,
+      "Content-Type": "application/json",
+    },
+    body: rpcBody,
+  });
+  assert(
+    observerRpc.status === 403,
+    `observer invocation returned ${observerRpc.status}, expected 403`,
+  );
+
+  const observerEscalation = await tokenEndpointRequest({
+    clientId: observerClientId,
+    clientSecret: observerClientSecret,
+    scope: invokeScope,
+  });
+  assert(
+    observerEscalation.status === 400 &&
+      observerEscalation.payload?.error === "invalid_scope",
+    `observer scope escalation returned ${observerEscalation.status}, expected OAuth invalid_scope`,
+  );
+
+  const deniedToken = await requestAccessToken({
+    clientId: deniedClientId,
+    clientSecret: deniedClientSecret,
+    scope: invokeScope,
+  });
+  const deniedClaims = decodeJwtClaims(deniedToken);
+  assert(deniedClaims.sub === deniedClientId, "denied token has the wrong subject");
+  assert(deniedClaims.role === "untrusted", "denied token has the wrong role");
+  const deniedRpc = await fetch(rpcUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${deniedToken}`,
+      "Content-Type": "application/json",
+    },
+    body: rpcBody,
+  });
+  assert(
+    deniedRpc.status === 403,
+    `untrusted invoker returned ${deniedRpc.status}, expected 403`,
+  );
+
   if (managed) {
     const expiredToken = await requestAccessToken({
       clientId: "stale-client",
@@ -438,6 +507,7 @@ async function assertGatewayAuthentication() {
       `expired access token returned ${expired.status}, expected 401`,
     );
   }
+  passed("caller identity and scope authorization");
   passed(
     managed
       ? "OAuth exchange plus missing, malformed, invalid, expired, and valid auth"
@@ -638,6 +708,10 @@ function composeCapture(args) {
 function sensitiveValues() {
   return [
     oauthClientSecret,
+    observerClientSecret,
+    deniedClientSecret,
+    bridgeClientSecret,
+    referenceClientSecret,
     "wrong-secret",
     "stale-client-secret",
     ...issuedTokens,
@@ -685,6 +759,27 @@ async function requestAccessToken({
   clientSecret = oauthClientSecret,
   scope = oauthScope,
 } = {}) {
+  const { response, payload } = await tokenEndpointRequest({
+    tokenUrl,
+    clientId,
+    clientSecret,
+    scope,
+  });
+  if (!response.ok) {
+    const code = typeof payload?.error === "string" ? `: ${payload.error}` : "";
+    throw new Error(`OAuth token exchange failed (${response.status})${code}`);
+  }
+  assert(typeof payload.access_token === "string", "OAuth response has no access token");
+  issuedTokens.add(payload.access_token);
+  return payload.access_token;
+}
+
+async function tokenEndpointRequest({
+  tokenUrl = oauthTokenUrl,
+  clientId = oauthClientId,
+  clientSecret = oauthClientSecret,
+  scope = oauthScope,
+} = {}) {
   const response = await fetch(tokenUrl, {
     method: "POST",
     headers: {
@@ -704,13 +799,7 @@ async function requestAccessToken({
     }
     throw new Error("OAuth token endpoint returned a non-JSON response");
   }
-  if (!response.ok) {
-    const code = typeof payload.error === "string" ? `: ${payload.error}` : "";
-    throw new Error(`OAuth token exchange failed (${response.status})${code}`);
-  }
-  assert(typeof payload.access_token === "string", "OAuth response has no access token");
-  issuedTokens.add(payload.access_token);
-  return payload.access_token;
+  return { response, status: response.status, payload };
 }
 
 function decodeJwtClaims(token) {

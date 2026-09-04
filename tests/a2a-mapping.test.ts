@@ -73,7 +73,11 @@ describe("A2A and Letta mapping", () => {
         tokenUrl: "http://127.0.0.1:9000/token",
         metadataUrl:
           "http://127.0.0.1:9000/.well-known/oauth-authorization-server",
-        requiredScope: "a2a.invoke",
+        availableScopes: {
+          "a2a.discover": "Discover an A2A agent through the lab gateway.",
+          "a2a.invoke": "Invoke an A2A agent through the lab gateway.",
+        },
+        requiredScopes: ["a2a.invoke"],
       },
     );
 
@@ -97,6 +101,8 @@ describe("A2A and Letta mapping", () => {
                   tokenUrl: "http://127.0.0.1:9000/token",
                   refreshUrl: "",
                   scopes: {
+                    "a2a.discover":
+                      "Discover an A2A agent through the lab gateway.",
                     "a2a.invoke": "Invoke an A2A agent through the lab gateway.",
                   },
                 },
@@ -121,6 +127,8 @@ describe("A2A and Letta mapping", () => {
               clientCredentials: {
                 tokenUrl: "http://127.0.0.1:9000/token",
                 scopes: {
+                  "a2a.discover":
+                    "Discover an A2A agent through the lab gateway.",
                   "a2a.invoke": "Invoke an A2A agent through the lab gateway.",
                 },
               },

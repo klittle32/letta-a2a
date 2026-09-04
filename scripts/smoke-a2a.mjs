@@ -7,9 +7,11 @@ const baseUrl =
   process.env.A2A_GATEWAY_URL ?? "http://127.0.0.1:4000";
 const oauthTokenUrl =
   process.env.OAUTH_TOKEN_URL ?? "http://127.0.0.1:9000/token";
-const oauthClientId = process.env.OAUTH_CLIENT_ID ?? "a2a-lab-client";
+const oauthClientId = process.env.OAUTH_CLIENT_ID ?? "operator-client";
 const oauthClientSecret =
-  process.env.OAUTH_CLIENT_SECRET ?? "a2a-lab-client-secret";
+  process.env.OAUTH_CLIENT_SECRET ?? "operator-client-secret";
+const oauthScope =
+  process.env.OAUTH_SCOPE ?? "a2a.discover a2a.invoke";
 let cachedToken;
 const prompt =
   process.argv.slice(3).join(" ") ||
@@ -135,7 +137,7 @@ async function requestAccessToken() {
     },
     body: new URLSearchParams({
       grant_type: "client_credentials",
-      scope: "a2a.invoke",
+      scope: oauthScope,
     }),
     signal: AbortSignal.timeout(10_000),
   });

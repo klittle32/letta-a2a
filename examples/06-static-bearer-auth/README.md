@@ -124,7 +124,7 @@ The Agent Card contains only the scheme type and format hint. The actual credent
 ## Boundaries
 
 - One shared static key authenticates every caller; it does not establish per-agent identity.
-- There are no scopes or authorization decisions. Example 08 is reserved for that distinction.
+- There are no scopes or authorization decisions. The current [Example 08](../08-authorization-policy/) stack demonstrates that distinction.
 - Key issuance, rotation, revocation, expiry, and secure storage are outside this lab example.
 - The backend services are private Compose-network implementation details. The declared policy describes their gateway-published endpoints, where enforcement occurs.
-- OAuth client credentials are implemented by the current [Example 07](../07-oauth-client-credentials/) stack; this checkpoint remains useful for comparing the permanent-key and short-lived-token designs.
+- OAuth client credentials were introduced in [Example 07](../07-oauth-client-credentials/); this checkpoint remains useful for comparing the permanent-key and short-lived-token designs.

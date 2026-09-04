@@ -178,9 +178,12 @@ def build_agent_card(
                         client_credentials=ClientCredentialsOAuthFlow(
                             token_url=f"{oauth_base_url}/token",
                             scopes={
+                                "a2a.discover": (
+                                    "Discover an A2A agent through the lab gateway."
+                                ),
                                 "a2a.invoke": (
                                     "Invoke an A2A agent through the lab gateway."
-                                )
+                                ),
                             },
                         )
                     ),
@@ -257,12 +260,12 @@ def create_app(
                 "OAUTH_TOKEN_URL",
                 "http://auth-server:9000/token",
             ),
-            client_id=os.environ.get("OAUTH_CLIENT_ID", "a2a-lab-client"),
+            client_id=os.environ.get("OAUTH_CLIENT_ID", "reference-agent-client"),
             client_secret=os.environ.get(
                 "OAUTH_CLIENT_SECRET",
-                "a2a-lab-client-secret",
+                "reference-agent-client-secret",
             ),
-            scope=os.environ.get("OAUTH_SCOPE", "a2a.invoke"),
+            scope=os.environ.get("OAUTH_SCOPE", "a2a.discover a2a.invoke"),
         )
         outbound_client = OfficialA2AClient(
             endpoint=os.environ.get(

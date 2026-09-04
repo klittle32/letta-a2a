@@ -24,7 +24,7 @@ The evaluation proved:
 - Asynchronous task creation and polling.
 - Letta-to-external-agent nested delegation without gateway re-entry deadlock.
 - Cancellation propagation and stable terminal states.
-- Strict edge authentication, preservation of the tested card fields, rewriting of the tested A2A 1.0 interface URL, a reachable UI, and richer structured A2A logs. The original gateway evaluation used a static key; the current stack uses the JWT policy proven in Example 07.
+- Strict edge authentication, preservation of the tested card fields, rewriting of the tested A2A 1.0 interface URL, a reachable UI, and richer structured A2A logs. Example 07 established JWT authentication; the current stack adds the caller-aware authorization policy proven in Example 08.
 
 The repository keeps only agentgateway. Evidence and limitations are recorded in [`docs/GATEWAY_DECISION.md`](../docs/GATEWAY_DECISION.md).
 
@@ -38,8 +38,8 @@ The repository keeps only agentgateway. Evidence and limitations are recorded in
 | 04 | [`letta-to-external-a2a-agent`](04-letta-to-external-a2a-agent/) | Documented; manually verified | Letta chooses `a2a_invoke`; the controller calls an independent A2A agent and returns its result. |
 | 05 | [`external-a2a-agent-to-letta`](05-external-a2a-agent-to-letta/) | Documented; manually verified | An independent A2A agent discovers and delegates work to Letta. |
 | 06 | [`static-bearer-auth`](06-static-bearer-auth/) | Historical stage; verified at `a0219be` | Advertise the gateway policy in Agent Cards and demonstrate missing, incorrect, and valid credentials. |
-| 07 | [`oauth-client-credentials`](07-oauth-client-credentials/) | Documented; protocol and live suites verified | Obtain a short-lived OAuth 2.0 access token and use it for agent-to-agent calls. |
-| 08 | `authorization-policy` | Planned | Permit or deny A2A operations based on authenticated caller identity and scopes. |
+| 07 | [`oauth-client-credentials`](07-oauth-client-credentials/) | Historical stage; verified at `8122018` | Obtain a short-lived OAuth 2.0 access token and use it for agent-to-agent calls. |
+| 08 | [`authorization-policy`](08-authorization-policy/) | Documented; protocol and live suites verified | Permit or deny A2A operations based on authenticated caller identity and scopes. |
 | 09 | `streaming` | Planned | Translate safe Letta App Server WebSocket events into A2A Server-Sent Events. |
 | 10 | [`failure-and-cancellation`](10-failure-and-cancellation/) | Documented; manually verified | Observe explicit failure and cancellation, including outer-to-child cancellation propagation. |
 | 11 | `push-notifications` | Final feature | Register an authenticated webhook, disconnect, and receive asynchronous task updates. |
@@ -79,11 +79,11 @@ At checkpoint `a0219be`, the shared lab key formed a complete protocol example. 
 
 ### 07 — OAuth client credentials
 
-The current stack uses a small local authorization server. Calling agents exchange client credentials for short-lived access tokens, cache them until near expiry, and send them as HTTP Bearer authentication. Agentgateway validates issuer, audience, signature, time claims, and subject, then requires the Agent Card's declared `a2a.invoke` scope. Browser login and end-user authorization flows remain out of this server-to-server example.
+At checkpoint `8122018`, the stack uses a small local authorization server. Calling agents exchange client credentials for short-lived access tokens, cache them until near expiry, and send them as HTTP Bearer authentication. Agentgateway validates issuer, audience, signature, time claims, and subject, then requires the Agent Card's declared `a2a.invoke` scope. Browser login and end-user authorization flows remain out of this server-to-server example.
 
 ### 08 — Authorization policy
 
-Separate identity from permission. Use valid credentials with different scopes to prove that one caller may invoke or inspect an operation while another receives `403`. Authorization must be enforced by the gateway or controller, never by asking the model to comply.
+Separate identity from permission. The current stack uses distinct operator, internal-agent, observer, and denied-invoker identities. Valid credentials with different signed roles and scopes prove that one caller may discover or invoke while another receives `403`. Authorization is enforced by agentgateway, never by asking the model to comply.
 
 ### 09 — Streaming
 

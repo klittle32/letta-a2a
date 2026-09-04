@@ -25,7 +25,8 @@ def test_agent_card_advertises_only_implemented_protocols() -> None:
     )
     assert oauth.flows.client_credentials.token_url == "http://127.0.0.1:9000/token"
     assert oauth.flows.client_credentials.scopes == {
-        "a2a.invoke": "Invoke an A2A agent through the lab gateway."
+        "a2a.discover": "Discover an A2A agent through the lab gateway.",
+        "a2a.invoke": "Invoke an A2A agent through the lab gateway.",
     }
     assert list(card.security_requirements[0].schemes) == ["a2aOAuth"]
     assert list(card.security_requirements[0].schemes["a2aOAuth"].list) == [
@@ -42,9 +43,12 @@ def test_agent_card_advertises_only_implemented_protocols() -> None:
                     "clientCredentials": {
                         "tokenUrl": "http://127.0.0.1:9000/token",
                         "scopes": {
+                            "a2a.discover": (
+                                "Discover an A2A agent through the lab gateway."
+                            ),
                             "a2a.invoke": (
                                 "Invoke an A2A agent through the lab gateway."
-                            )
+                            ),
                         },
                     }
                 },

@@ -86,7 +86,11 @@ for (const runtime of runtimes) {
   const card = createAgentCard(definition, {
     tokenUrl: `${oauthPublicBaseUrl}/token`,
     metadataUrl: `${oauthPublicBaseUrl}/.well-known/oauth-authorization-server`,
-    requiredScope: "a2a.invoke",
+    availableScopes: {
+      "a2a.discover": "Discover an A2A agent through the lab gateway.",
+      "a2a.invoke": "Invoke an A2A agent through the lab gateway.",
+    },
+    requiredScopes: ["a2a.invoke"],
   });
   const handler = new DefaultRequestHandler(
     card,

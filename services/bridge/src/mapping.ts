@@ -9,7 +9,8 @@ import type { AgentDefinition } from "./config.js";
 export interface OAuthCardConfig {
   tokenUrl: string;
   metadataUrl: string;
-  requiredScope: string;
+  availableScopes: Record<string, string>;
+  requiredScopes: string[];
 }
 
 interface TextPartLike {
@@ -159,10 +160,7 @@ export function createAgentCard(
                 value: {
                   tokenUrl: oauth.tokenUrl,
                   refreshUrl: "",
-                  scopes: {
-                    [oauth.requiredScope]:
-                      "Invoke an A2A agent through the lab gateway.",
-                  },
+                  scopes: oauth.availableScopes,
                 },
               },
             },
@@ -174,7 +172,7 @@ export function createAgentCard(
     securityRequirements: [
       {
         schemes: {
-          a2aOAuth: { list: [oauth.requiredScope] },
+          a2aOAuth: { list: oauth.requiredScopes },
         },
       },
     ],

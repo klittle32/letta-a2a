@@ -6,6 +6,15 @@ Server-to-server A2A callers should obtain short-lived access tokens instead of 
 
 Agentgateway verifies the JWT signature against the authorization server's JWKS, checks issuer, audience, time claims, and subject, then requires the scope declared by the Agent Card. No browser or end-user login is involved.
 
+This is a frozen historical stage. Example 08 gave callers distinct identities and added authorization policy. To run this exact shared-identity OAuth implementation without changing your current checkout, create a detached worktree at its verified commit:
+
+```bash
+git worktree add /tmp/letta-a2a-example-07 8122018
+cd /tmp/letta-a2a-example-07
+cp .env.example .env
+nvim .env
+```
+
 Executed verification is retained in [`docs/evidence/2026-09-04-example-07.md`](../../docs/evidence/2026-09-04-example-07.md).
 
 ## Message flow
@@ -144,7 +153,7 @@ Both backend Agent Cards use the canonical A2A 1.0 OAuth2 security shape: an `oa
 - The lab uses plain HTTP on loopback. A real OAuth authorization server and public A2A endpoint require HTTPS.
 - Agent Card discovery is itself protected, so a caller must learn the authorization-server location and bootstrap client credentials out of band before it can fetch the card.
 - Cards advertise the host-visible loopback token URL. The two Compose-internal callers use the equivalent private `http://auth-server:9000/token` route from environment configuration.
-- The bridge, reference agent, and shell client intentionally share one disposable client identity. This proves authentication but not differentiated caller identity.
-- The single `a2a.invoke` scope protects every current A2A route. Example 08 is reserved for caller-aware authorization policy and distinct permissions.
+- At this checkpoint, the bridge, reference agent, and shell client intentionally share one disposable client identity. This proves authentication but not differentiated caller identity.
+- At this checkpoint, the single `a2a.invoke` scope protects every A2A route. The current [Example 08](../08-authorization-policy/) stack adds caller-aware authorization and distinct permissions.
 - Client credentials have no refresh token. A caller repeats the credentials exchange when its access token nears expiry.
 - Default credentials are readable from the local Compose configuration. Do not reuse them or this fixture unchanged outside the isolated lab.

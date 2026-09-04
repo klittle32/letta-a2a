@@ -22,6 +22,7 @@ class ClientRegistration:
     secret: str
     audience: str
     scopes: frozenset[str]
+    role: str
     clock_offset_seconds: int = 0
 
 
@@ -70,6 +71,14 @@ def create_app(settings: AuthServerSettings | None = None) -> Starlette:
         raise ValueError("OAUTH_ISSUER must be an HTTP(S) URL")
     if not settings.clients:
         raise ValueError("at least one OAuth client is required")
+    if any(
+        not registration.secret
+        or not registration.audience
+        or not registration.scopes
+        or not registration.role
+        for registration in settings.clients.values()
+    ):
+        raise ValueError("OAuth client registrations must be complete")
     if settings.token_ttl_seconds <= 0:
         raise ValueError("OAUTH_TOKEN_TTL_SECONDS must be positive")
     issuer = settings.issuer.rstrip("/")
@@ -140,6 +149,7 @@ def create_app(settings: AuthServerSettings | None = None) -> Starlette:
             "sub": client_id,
             "client_id": client_id,
             "azp": client_id,
+            "role": registration.role,
             "scope": canonical_scope,
             "iat": issued_at,
             "nbf": issued_at,
@@ -170,25 +180,76 @@ def create_app(settings: AuthServerSettings | None = None) -> Starlette:
 
 
 def settings_from_environment() -> AuthServerSettings:
-    client_id = os.environ.get("OAUTH_CLIENT_ID", "a2a-lab-client")
-    client_secret = os.environ.get("OAUTH_CLIENT_SECRET", "a2a-lab-client-secret")
     audience = os.environ.get("OAUTH_AUDIENCE", "letta-a2a-gateway")
-    allowed_scopes = frozenset(
-        os.environ.get("OAUTH_ALLOWED_SCOPES", "a2a.invoke").split()
-    )
-    clients = {
-        client_id: ClientRegistration(
-            secret=client_secret,
+    clients: dict[str, ClientRegistration] = {}
+
+    def register(
+        client_id_variable: str,
+        client_secret_variable: str,
+        *,
+        default_client_id: str,
+        default_client_secret: str,
+        scopes: frozenset[str],
+        role: str,
+    ) -> None:
+        client_id = os.environ.get(client_id_variable, default_client_id)
+        if client_id in clients:
+            raise ValueError(f"duplicate OAuth client ID: {client_id}")
+        clients[client_id] = ClientRegistration(
+            secret=os.environ.get(client_secret_variable, default_client_secret),
             audience=audience,
-            scopes=allowed_scopes,
+            scopes=scopes,
+            role=role,
         )
-    }
+
+    full_access = frozenset({"a2a.discover", "a2a.invoke"})
+    register(
+        "OAUTH_CLIENT_ID",
+        "OAUTH_CLIENT_SECRET",
+        default_client_id="operator-client",
+        default_client_secret="operator-client-secret",
+        scopes=full_access,
+        role="operator",
+    )
+    register(
+        "OAUTH_BRIDGE_CLIENT_ID",
+        "OAUTH_BRIDGE_CLIENT_SECRET",
+        default_client_id="bridge-client",
+        default_client_secret="bridge-client-secret",
+        scopes=full_access,
+        role="agent",
+    )
+    register(
+        "OAUTH_REFERENCE_CLIENT_ID",
+        "OAUTH_REFERENCE_CLIENT_SECRET",
+        default_client_id="reference-agent-client",
+        default_client_secret="reference-agent-client-secret",
+        scopes=full_access,
+        role="agent",
+    )
+    register(
+        "OAUTH_OBSERVER_CLIENT_ID",
+        "OAUTH_OBSERVER_CLIENT_SECRET",
+        default_client_id="observer-client",
+        default_client_secret="observer-client-secret",
+        scopes=frozenset({"a2a.discover"}),
+        role="observer",
+    )
+    register(
+        "OAUTH_DENIED_CLIENT_ID",
+        "OAUTH_DENIED_CLIENT_SECRET",
+        default_client_id="denied-invoker-client",
+        default_client_secret="denied-invoker-client-secret",
+        scopes=frozenset({"a2a.invoke"}),
+        role="untrusted",
+    )
     stale_client_secret = os.environ.get("OAUTH_STALE_CLIENT_SECRET", "")
     if stale_client_secret:
         clients["stale-client"] = ClientRegistration(
             secret=stale_client_secret,
             audience=audience,
-            scopes=frozenset({"a2a.invoke"}),
+            scopes=full_access,
+            role="operator",
             clock_offset_seconds=-300,
         )
     return AuthServerSettings(

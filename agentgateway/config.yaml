@@ -15,10 +15,11 @@ gateways:
       jwks:
         url: http://auth-server:9000/jwks
       jwtValidationOptions:
-        requiredClaims: [exp, nbf, sub]
+        requiredClaims: [exp, nbf, sub, scope, role]
     authorization:
       rules:
-        - require: 'jwt.scope.split(" ").exists(grant, grant == "a2a.invoke")'
+        - allow: 'request.method == "GET" && request.path.endsWith("/.well-known/agent-card.json") && jwt.scope.split(" ").exists(grant, grant == "a2a.discover")'
+        - allow: 'request.method == "POST" && ["operator", "agent"].exists(role, role == jwt.role) && jwt.scope.split(" ").exists(grant, grant == "a2a.invoke")'
   ui:
     port: 4090
 

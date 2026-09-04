@@ -22,7 +22,8 @@ def test_metadata_jwks_and_client_credentials_token() -> None:
                 "operator-client": ClientRegistration(
                     secret="operator-secret",
                     audience="letta-a2a-gateway",
-                    scopes=frozenset({"a2a.invoke"}),
+                    scopes=frozenset({"a2a.discover", "a2a.invoke"}),
+                    role="operator",
                 )
             },
             token_ttl_seconds=60,
@@ -40,7 +41,7 @@ def test_metadata_jwks_and_client_credentials_token() -> None:
                 "jwks_uri": "http://127.0.0.1:9000/jwks",
                 "grant_types_supported": ["client_credentials"],
                 "token_endpoint_auth_methods_supported": ["client_secret_basic"],
-                "scopes_supported": ["a2a.invoke"],
+                "scopes_supported": ["a2a.discover", "a2a.invoke"],
             }
 
             jwks = (await client.get("/jwks")).json()
@@ -53,14 +54,14 @@ def test_metadata_jwks_and_client_credentials_token() -> None:
                 auth=("operator-client", "operator-secret"),
                 data={
                     "grant_type": "client_credentials",
-                    "scope": "a2a.invoke",
+                    "scope": "a2a.discover a2a.invoke",
                 },
             )
             assert response.status_code == 200
             token_response = response.json()
             assert token_response["token_type"] == "Bearer"
             assert token_response["expires_in"] == 60
-            assert token_response["scope"] == "a2a.invoke"
+            assert token_response["scope"] == "a2a.discover a2a.invoke"
             assert response.headers["cache-control"] == "no-store"
 
             header, claims, signature = decode_jwt(token_response["access_token"])
@@ -70,7 +71,8 @@ def test_metadata_jwks_and_client_credentials_token() -> None:
             assert claims["aud"] == "letta-a2a-gateway"
             assert claims["sub"] == "operator-client"
             assert claims["client_id"] == "operator-client"
-            assert claims["scope"] == "a2a.invoke"
+            assert claims["role"] == "operator"
+            assert claims["scope"] == "a2a.discover a2a.invoke"
             assert claims["exp"] - claims["iat"] == 60
             assert claims["iat"] <= int(time.time()) <= claims["exp"]
 
@@ -96,7 +98,8 @@ def test_token_endpoint_rejects_bad_clients_grants_and_scopes() -> None:
                 "operator-client": ClientRegistration(
                     secret="operator-secret",
                     audience="letta-a2a-gateway",
-                    scopes=frozenset({"a2a.invoke"}),
+                    scopes=frozenset({"a2a.discover", "a2a.invoke"}),
+                    role="operator",
                 )
             },
             token_ttl_seconds=60,
@@ -130,6 +133,63 @@ def test_token_endpoint_rejects_bad_clients_grants_and_scopes() -> None:
             )
             assert wrong_scope.status_code == 400
             assert wrong_scope.json()["error"] == "invalid_scope"
+
+    asyncio.run(exercise())
+
+
+def test_distinct_clients_receive_registered_identity_and_permissions() -> None:
+    async def exercise() -> None:
+        settings = AuthServerSettings(
+            issuer="http://127.0.0.1:9000",
+            clients={
+                "observer-client": ClientRegistration(
+                    secret="observer-secret",
+                    audience="letta-a2a-gateway",
+                    scopes=frozenset({"a2a.discover"}),
+                    role="observer",
+                ),
+                "denied-invoker-client": ClientRegistration(
+                    secret="denied-secret",
+                    audience="letta-a2a-gateway",
+                    scopes=frozenset({"a2a.invoke"}),
+                    role="untrusted",
+                ),
+            },
+        )
+        transport = httpx.ASGITransport(app=create_app(settings))
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://auth-server",
+        ) as client:
+            observer = await client.post(
+                "/token",
+                auth=("observer-client", "observer-secret"),
+                data={"grant_type": "client_credentials", "scope": "a2a.discover"},
+            )
+            assert observer.status_code == 200
+            observer_claims = decode_jwt(observer.json()["access_token"])[1]
+            assert observer_claims["sub"] == "observer-client"
+            assert observer_claims["role"] == "observer"
+            assert observer_claims["scope"] == "a2a.discover"
+
+            denied_invoker = await client.post(
+                "/token",
+                auth=("denied-invoker-client", "denied-secret"),
+                data={"grant_type": "client_credentials", "scope": "a2a.invoke"},
+            )
+            assert denied_invoker.status_code == 200
+            denied_claims = decode_jwt(denied_invoker.json()["access_token"])[1]
+            assert denied_claims["sub"] == "denied-invoker-client"
+            assert denied_claims["role"] == "untrusted"
+            assert denied_claims["scope"] == "a2a.invoke"
+
+            observer_cannot_escalate = await client.post(
+                "/token",
+                auth=("observer-client", "observer-secret"),
+                data={"grant_type": "client_credentials", "scope": "a2a.invoke"},
+            )
+            assert observer_cannot_escalate.status_code == 400
+            assert observer_cannot_escalate.json()["error"] == "invalid_scope"
 
     asyncio.run(exercise())
 

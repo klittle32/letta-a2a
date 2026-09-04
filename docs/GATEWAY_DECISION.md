@@ -60,7 +60,7 @@ The repository now keeps only agentgateway. The temporary comparison overlay and
 
 ## Subsequent authentication evolution
 
-The gateway evaluation and Example 06 deliberately used one static API key. [Example 07](../examples/07-oauth-client-credentials/) later replaced that current runtime policy with strict JWT authentication backed by a local OAuth client-credentials fixture and JWKS. Agentgateway now validates issuer, audience, signature, and time claims and requires `a2a.invoke`; the original static-key checkpoint remains reproducible at commit `a0219be`.
+The gateway evaluation and Example 06 deliberately used one static API key. [Example 07](../examples/07-oauth-client-credentials/) replaced it with strict JWT authentication backed by a local OAuth client-credentials fixture and JWKS. [Example 08](../examples/08-authorization-policy/) now adds issuer-assigned caller roles and method-specific scopes: discovery requires `a2a.discover`, while invocation requires `a2a.invoke` and a trusted caller role. The static-key checkpoint remains reproducible at `a0219be`; shared-identity OAuth remains reproducible at `8122018`.
 
 This does not change the gateway choice. It demonstrates that the same listener can move from a permanent shared secret to short-lived access tokens without changing A2A routing or task behavior.
 

@@ -35,14 +35,18 @@ describe("primary agentgateway topology", () => {
       audiences: ["letta-a2a-gateway"],
       jwks: { url: "http://auth-server:9000/jwks" },
       jwtValidationOptions: {
-        requiredClaims: ["exp", "nbf", "sub"],
+        requiredClaims: ["exp", "nbf", "sub", "scope", "role"],
       },
     });
     expect(config.gateways.a2a.authorization).toEqual({
       rules: [
         {
-          require:
-            'jwt.scope.split(" ").exists(grant, grant == "a2a.invoke")',
+          allow:
+            'request.method == "GET" && request.path.endsWith("/.well-known/agent-card.json") && jwt.scope.split(" ").exists(grant, grant == "a2a.discover")',
+        },
+        {
+          allow:
+            'request.method == "POST" && ["operator", "agent"].exists(role, role == jwt.role) && jwt.scope.split(" ").exists(grant, grant == "a2a.invoke")',
         },
       ],
     });
@@ -100,6 +104,18 @@ describe("primary agentgateway topology", () => {
     expect(compose.services["reference-agent"].environment.OAUTH_TOKEN_URL).toBe(
       "http://auth-server:9000/token",
     );
+    expect(compose.services.bridge.environment.OAUTH_CLIENT_ID).toBe(
+      "${OAUTH_BRIDGE_CLIENT_ID:-bridge-client}",
+    );
+    expect(compose.services.bridge.environment.OAUTH_SCOPE).toBe(
+      "a2a.discover a2a.invoke",
+    );
+    expect(compose.services["reference-agent"].environment.OAUTH_CLIENT_ID).toBe(
+      "${OAUTH_REFERENCE_CLIENT_ID:-reference-agent-client}",
+    );
+    expect(compose.services["reference-agent"].environment.OAUTH_SCOPE).toBe(
+      "a2a.discover a2a.invoke",
+    );
     expect(compose.services["reference-agent"].environment.A2A_GATEWAY_KEY).toBeUndefined();
 
     const authServer = compose.services["auth-server"];
@@ -114,6 +130,21 @@ describe("primary agentgateway topology", () => {
     expect(authServer.ports).toEqual([
       "127.0.0.1:${OAUTH_PORT:-9000}:9000",
     ]);
+    expect(authServer.environment.OAUTH_CLIENT_ID).toBe(
+      "${OAUTH_CLIENT_ID:-operator-client}",
+    );
+    expect(authServer.environment.OAUTH_BRIDGE_CLIENT_ID).toBe(
+      "${OAUTH_BRIDGE_CLIENT_ID:-bridge-client}",
+    );
+    expect(authServer.environment.OAUTH_REFERENCE_CLIENT_ID).toBe(
+      "${OAUTH_REFERENCE_CLIENT_ID:-reference-agent-client}",
+    );
+    expect(authServer.environment.OAUTH_OBSERVER_CLIENT_ID).toBe(
+      "${OAUTH_OBSERVER_CLIENT_ID:-observer-client}",
+    );
+    expect(authServer.environment.OAUTH_DENIED_CLIENT_ID).toBe(
+      "${OAUTH_DENIED_CLIENT_ID:-denied-invoker-client}",
+    );
   });
 
   test("removes the temporary comparison layer and prior gateway configuration", () => {
