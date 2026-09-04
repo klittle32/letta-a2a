@@ -32,7 +32,9 @@ The lab has answered the architectural question. Do not add more protocol machin
 
 The progressive, observable demonstrations now live in [`examples/`](../examples/README.md). Start with Agent Card discovery and basic messaging, then continue through context, [Letta delegating to an external A2A agent](../examples/04-letta-to-external-a2a-agent/), and the [external agent delegating back to Letta](../examples/05-external-a2a-agent-to-letta/).
 
-The examples intentionally use Docker on one host. Multi-host deployment is a networking and operations concern rather than part of this focused protocol reference. Examples 06–08 preserve the static-key, shared-identity OAuth, and caller-authorization stages; Examples 09–11 complete the current stack with streaming, failure/cancellation, and authenticated push notifications.
+The implemented examples intentionally use Docker on one host. Multi-host deployment is a networking and operations concern rather than part of this focused protocol reference. Examples 06–08 preserve the static-key, shared-identity OAuth, and caller-authorization stages; Examples 09–11 complete the current stack with streaming, failure/cancellation, and authenticated push notifications.
+
+Two planned examples extend the answered protocol question only for concrete interoperability use cases: [Example 12](EXAMPLE_12_IMPLEMENTATION_PLAN.md) puts a Dockerized Hermes interactive TUI in the caller seat against a Google ADK agent, while [Example 14](EXAMPLE_14_IMPLEMENTATION_PLAN.md) composes A2A with one persistent ACPX Claude session. Neither plan is a reason to broaden the core lab into general orchestration infrastructure.
 
 The earlier Letta-to-Letta proof remains available outside the primary two-implementation learning path:
 

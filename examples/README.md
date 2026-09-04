@@ -1,6 +1,6 @@
 # A2A Examples Roadmap
 
-This directory is the learning path and implementation roadmap for the repository. Each example teaches one A2A concept using the shared Docker lab, which contains Letta agents and an independently implemented A2A agent.
+This directory is the learning path and implementation roadmap for the repository. Examples 01–11 teach A2A concepts using the shared Docker lab, which contains Letta agents and an independently implemented A2A agent. Planned examples may add profile-gated Docker services for concrete cross-runtime use cases without changing that primary stack.
 
 The external reference agent happens to be written in Python, but the examples describe it as an external A2A agent. Its language and framework are implementation details; any conforming agent should be able to take its place.
 
@@ -45,6 +45,12 @@ Streaming was outside the original gateway-selection matrix. Example 09 subseque
 | 09 | [`streaming`](09-streaming/) | Documented; protocol and live suites verified | Translate safe Letta App Server WebSocket events into A2A Server-Sent Events. |
 | 10 | [`failure-and-cancellation`](10-failure-and-cancellation/) | Documented; manually verified | Observe explicit failure and cancellation, including outer-to-child cancellation propagation. |
 | 11 | [`push-notifications`](11-push-notifications/) | Documented; protocol and live suites verified | Register an authenticated webhook, let the initiating request return, and receive asynchronous task updates. |
+| 12 | Hermes TUI to Google ADK | Planned; [implementation plan](../docs/EXAMPLE_12_IMPLEMENTATION_PLAN.md) | Use Hermes's built-in A2A tool from an interactive Docker TUI to continue a conversation with a Google ADK agent through agentgateway. |
+| 14 | A2A to ACPX Claude | Planned; [implementation plan](../docs/EXAMPLE_14_IMPLEMENTATION_PLAN.md) | Map an A2A context to one persistent ACPX Claude session and return its final assistant text. |
+
+Example 13 is intentionally unassigned. This roadmap does not invent a filler scenario or create an empty placeholder merely to close the numbering gap.
+
+Implementation order is explicit: deliver Example 12 first. Example 14 remains planned until the Hermes TUI → Google ADK walkthrough is complete and verified.
 
 ## Scenario details
 
@@ -99,6 +105,14 @@ Demonstrate deterministic remote failure, direct task cancellation, and cancella
 
 Register an authenticated webhook for a long-running task, let the initiating request return, and receive a later task update by HTTP POST without task polling. Verify callback authentication, duplicate-delivery safety, and retrieval of the final task. This stays last because it adds a second inbound security boundary and delivery-reliability concerns.
 
+### 12 — Hermes TUI to Google ADK
+
+Run the official Hermes Agent TUI interactively inside Docker and enable its built-in `a2a_call` tool for CLI sessions. Hermes calls one Google ADK agent through the existing JWT-protected `agentgateway`, then reuses the returned context ID for a second turn. The example keeps Hermes outbound-only, ADK in memory, and both model-backed paths explicitly live. See the [implementation plan](../docs/EXAMPLE_12_IMPLEMENTATION_PLAN.md).
+
+### 14 — A2A to ACPX Claude
+
+Expose one thin A2A adapter that maps a Letta caller's context to a persistent, server-selected ACPX Claude session. The first slice returns only final assistant text and translates basic cancellation and failure; it does not expose arbitrary ACP agents, workspaces, commands, permissions, or rich event streams. See the [implementation plan](../docs/EXAMPLE_14_IMPLEMENTATION_PLAN.md).
+
 ## Required README shape
 
 Every implemented example gets `examples/<number>-<name>/README.md` with:
@@ -133,7 +147,7 @@ Create a GitHub issue only when work needs design discussion, spans several sess
 
 ## Deliberate non-goals
 
-- Three-agent orchestration scenarios.
+- Three-agent orchestration scenarios. Gateways and protocol adapters are infrastructure, not additional logical agents.
 - Deployment across multiple physical hosts.
 - Binary file transfer. A2A supports file parts, but storage, scanning, limits, and URI lifecycle would distract from this repository's purpose.
 - A URL-handoff example. Sending a URL is ordinary message content, not a distinct A2A capability.
