@@ -142,7 +142,7 @@ export function createAgentCard(
     },
     version: "0.1.0",
     capabilities: {
-      streaming: false,
+      streaming: true,
       pushNotifications: false,
       extensions: [],
       extendedAgentCard: false,

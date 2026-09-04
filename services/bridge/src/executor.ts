@@ -57,7 +57,41 @@ export class LettaAgentExecutor implements AgentExecutor {
       }),
     );
 
+    const artifactId = randomUUID();
+    let pendingChunk: string | undefined;
+    let artifactStarted = false;
+    const publishPendingChunk = (lastChunk: boolean) => {
+      if (pendingChunk === undefined) return;
+      eventBus.publish(
+        AgentEvent.artifactUpdate({
+          taskId,
+          contextId,
+          artifact: {
+            artifactId,
+            name: "Letta response",
+            description: "Text returned by the delegated Letta turn.",
+            parts: [
+              {
+                content: { $case: "text", value: pendingChunk },
+                metadata: undefined,
+                filename: "",
+                mediaType: "text/plain",
+              },
+            ],
+            metadata: undefined,
+            extensions: [],
+          },
+          append: artifactStarted,
+          lastChunk,
+          metadata: {},
+        }),
+      );
+      artifactStarted = true;
+      pendingChunk = undefined;
+    };
+
     let response: string;
+    let turnStarted = false;
     try {
       const text = extractMessageText(userMessage).trim();
       if (!text) throw new Error("A2A message must contain a text part");
@@ -66,14 +100,20 @@ export class LettaAgentExecutor implements AgentExecutor {
         requestContext.request.configuration?.returnImmediately === true,
       );
 
+      turnStarted = true;
       response = await this.runtime.runTurn({
         a2aContextId: contextId,
         a2aTaskId: taskId,
         messageId: userMessage.messageId,
         text,
         hop: extractA2AHop(requestContext.request.metadata),
+        onAssistantDelta: (chunk) => {
+          publishPendingChunk(false);
+          pendingChunk = chunk;
+        },
       });
     } catch (error) {
+      publishPendingChunk(false);
       const requested =
         error instanceof LettaTurnCancelledError ? "canceled" : "failed";
       const outcome = this.runtime.claimTerminal(taskId, requested);
@@ -82,7 +122,10 @@ export class LettaAgentExecutor implements AgentExecutor {
         return;
       }
 
-      const message = error instanceof Error ? error.message : String(error);
+      let message = "Letta turn failed";
+      if (!turnStarted) {
+        message = error instanceof Error ? error.message : String(error);
+      }
       eventBus.publish(
         AgentEvent.statusUpdate({
           taskId,
@@ -128,30 +171,10 @@ export class LettaAgentExecutor implements AgentExecutor {
       return;
     }
 
-    eventBus.publish(
-      AgentEvent.artifactUpdate({
-        taskId,
-        contextId,
-        artifact: {
-          artifactId: randomUUID(),
-          name: "Letta response",
-          description: "Final text returned by the delegated Letta turn.",
-          parts: [
-            {
-              content: { $case: "text", value: response },
-              metadata: undefined,
-              filename: "",
-              mediaType: "text/plain",
-            },
-          ],
-          metadata: undefined,
-          extensions: [],
-        },
-        append: false,
-        lastChunk: true,
-        metadata: {},
-      }),
-    );
+    if (pendingChunk === undefined && !artifactStarted) {
+      pendingChunk = response;
+    }
+    publishPendingChunk(true);
     this.publishTerminal(
       eventBus,
       taskId,

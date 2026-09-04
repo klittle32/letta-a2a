@@ -52,6 +52,8 @@ One initial live run returned a model-generated typo in the requested exact toke
 - Gateway authentication and Agent Card advertisement are separate concerns. At evaluation time the proxied backend cards did not declare the enforced policy; [Example 06](../examples/06-static-bearer-auth/) now adds that declaration without changing gateway enforcement.
 - Streaming, push notifications, and signed-card behavior were not part of this decision.
 
+[Example 09](../examples/09-streaming/) subsequently proved ordered A2A SSE records through the same pinned gateway. That later result extends the repository's protocol evidence without retroactively changing the original selection matrix.
+
 ## Decision rationale
 
 Agentgateway keeps all proven behavior while reducing the topology from three gateway processes to one. It also preserves richer backend Agent Cards, enforces the lab key directly, and emits A2A-specific telemetry. Those improvements are material to an educational A2A reference implementation.

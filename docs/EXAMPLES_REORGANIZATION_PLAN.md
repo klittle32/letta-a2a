@@ -1,5 +1,7 @@
 # Examples Reorganization Plan and Record
 
+This file records the repository state when the examples were first reorganized. Current implementation status lives in [`../examples/README.md`](../examples/README.md); later examples intentionally make the original target tree and planning statement below historical.
+
 ## Goal
 
 Turn the repository's existing demonstrations into a progressive `examples/` learning path without duplicating the shared Docker stack, services, clients, or tests.

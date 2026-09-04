@@ -28,6 +28,15 @@ interface RuntimeScope {
   conversation_id: string;
 }
 
+interface TurnOptions {
+  a2aContextId: string;
+  a2aTaskId: string;
+  messageId: string;
+  text: string;
+  hop: number;
+  onAssistantDelta?: (text: string) => void;
+}
+
 export class LettaTurnCancelledError extends Error {
   constructor() {
     super("Letta turn was cancelled");
@@ -145,13 +154,7 @@ export class LettaRuntime {
     this.client?.close();
   }
 
-  async runTurn(options: {
-    a2aContextId: string;
-    a2aTaskId: string;
-    messageId: string;
-    text: string;
-    hop: number;
-  }): Promise<string> {
+  async runTurn(options: TurnOptions): Promise<string> {
     const active: ActiveTurn = {
       cancelled: false,
       hop: options.hop,
@@ -198,13 +201,7 @@ export class LettaRuntime {
   }
 
   private async runTurnUnlocked(
-    options: {
-      a2aContextId: string;
-      a2aTaskId: string;
-      messageId: string;
-      text: string;
-      hop: number;
-    },
+    options: TurnOptions,
     active: ActiveTurn,
   ): Promise<string> {
     const client = this.requiredClient();
@@ -256,11 +253,23 @@ export class LettaRuntime {
     try {
       return await new Promise<string>((resolve, reject) => {
         let assistantText = "";
+        let emittedAssistantText = "";
         let settled = false;
         let timeout: ReturnType<typeof setTimeout> | undefined;
         let cancellationDrainTimeout:
           | ReturnType<typeof setTimeout>
           | undefined;
+
+        const emitPublicAssistantText = (final: boolean) => {
+          const normalized = final
+            ? assistantText.trim()
+            : assistantText.trimStart().replace(/\s+$/u, "");
+          const nextChunk = normalized.slice(emittedAssistantText.length);
+          if (nextChunk && !active.cancelled) {
+            options.onAssistantDelta?.(nextChunk);
+            emittedAssistantText = normalized;
+          }
+        };
 
         const finish = (callback: () => void) => {
           if (settled) return;
@@ -296,7 +305,13 @@ export class LettaRuntime {
           if (!belongsToRuntime(message, runtime)) return;
 
           if (message.type === "stream_delta") {
-            assistantText += extractLettaAssistantText(message.delta);
+            const nestedSubagent =
+              "subagent_id" in message.delta &&
+              Boolean(message.delta.subagent_id);
+            if (!message.subagent_id && !nestedSubagent) {
+              assistantText += extractLettaAssistantText(message.delta);
+              emitPublicAssistantText(false);
+            }
             if (
               "message_type" in message.delta &&
               message.delta.message_type === "loop_error" &&
@@ -319,6 +334,7 @@ export class LettaRuntime {
             } else if (message.error) {
               finish(() => reject(new Error(message.error)));
             } else {
+              emitPublicAssistantText(true);
               finish(() => resolve(assistantText.trim()));
             }
           }

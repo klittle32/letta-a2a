@@ -24,9 +24,11 @@ The evaluation proved:
 - Asynchronous task creation and polling.
 - Letta-to-external-agent nested delegation without gateway re-entry deadlock.
 - Cancellation propagation and stable terminal states.
-- Strict edge authentication, preservation of the tested card fields, rewriting of the tested A2A 1.0 interface URL, a reachable UI, and richer structured A2A logs. Example 07 established JWT authentication; the current stack adds the caller-aware authorization policy proven in Example 08.
+- Strict edge authentication, preservation of the tested card fields, rewriting of the tested A2A 1.0 interface URL, a reachable UI, and richer structured A2A logs. Examples 07 and 08 subsequently established JWT authentication and caller-aware authorization; Example 09 adds SSE without changing those controls.
 
 The repository keeps only agentgateway. Evidence and limitations are recorded in [`docs/GATEWAY_DECISION.md`](../docs/GATEWAY_DECISION.md).
+
+Streaming was outside the original gateway-selection matrix. Example 09 subsequently proved ordered SSE records, safe Letta text projection, task persistence, and disconnect behavior through the same pinned gateway.
 
 ## Progression
 
@@ -39,10 +41,10 @@ The repository keeps only agentgateway. Evidence and limitations are recorded in
 | 05 | [`external-a2a-agent-to-letta`](05-external-a2a-agent-to-letta/) | Documented; manually verified | An independent A2A agent discovers and delegates work to Letta. |
 | 06 | [`static-bearer-auth`](06-static-bearer-auth/) | Historical stage; verified at `a0219be` | Advertise the gateway policy in Agent Cards and demonstrate missing, incorrect, and valid credentials. |
 | 07 | [`oauth-client-credentials`](07-oauth-client-credentials/) | Historical stage; verified at `8122018` | Obtain a short-lived OAuth 2.0 access token and use it for agent-to-agent calls. |
-| 08 | [`authorization-policy`](08-authorization-policy/) | Documented; protocol and live suites verified | Permit or deny A2A operations based on authenticated caller identity and scopes. |
-| 09 | `streaming` | Planned | Translate safe Letta App Server WebSocket events into A2A Server-Sent Events. |
+| 08 | [`authorization-policy`](08-authorization-policy/) | Historical stage; verified at `7bfd16b` | Permit or deny A2A operations based on authenticated caller identity and scopes. |
+| 09 | [`streaming`](09-streaming/) | Documented; protocol and live suites verified | Translate safe Letta App Server WebSocket events into A2A Server-Sent Events. |
 | 10 | [`failure-and-cancellation`](10-failure-and-cancellation/) | Documented; manually verified | Observe explicit failure and cancellation, including outer-to-child cancellation propagation. |
-| 11 | `push-notifications` | Final feature | Register an authenticated webhook, disconnect, and receive asynchronous task updates. |
+| 11 | `push-notifications` | Planned final feature | Register an authenticated webhook, disconnect, and receive asynchronous task updates. |
 
 ## Scenario details
 
@@ -87,7 +89,7 @@ Separate identity from permission. The current stack uses distinct operator, int
 
 ### 09 — Streaming
 
-Advertise streaming in the Agent Card and use A2A streaming or task subscription over Server-Sent Events. The bridge translates safe Letta App Server WebSocket events into ordered task-status and artifact updates, ending at a terminal state. Do not expose private reasoning or arbitrary internal runtime events.
+Both agents advertise streaming and use A2A `SendStreamingMessage` over Server-Sent Events. The bridge translates only top-level Letta assistant text into ordered artifact updates, while both implementations emit task/status lifecycle events ending at a terminal state. A deterministic reference-agent probe proves that disconnecting the SSE consumer leaves server-side execution intact for later `GetTask` retrieval.
 
 ### 10 — Failure and cancellation
 

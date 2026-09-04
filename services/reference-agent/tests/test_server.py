@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import httpx
 
@@ -16,7 +17,7 @@ def test_agent_card_advertises_only_implemented_protocols() -> None:
         "1.0",
         "0.3",
     ]
-    assert card.capabilities.streaming is False
+    assert card.capabilities.streaming is True
     assert card.supported_interfaces[0].url == "http://reference-agent:8090/"
     oauth = card.security_schemes["a2aOAuth"].oauth2_security_scheme
     assert oauth.description == "OAuth 2.0 client credentials enforced by agentgateway."
@@ -91,3 +92,64 @@ def test_health_and_agent_card_routes() -> None:
             assert "security" not in card.json()
 
     asyncio.run(exercise_routes())
+
+
+def test_streaming_route_emits_ordered_artifact_chunks() -> None:
+    async def exercise_stream() -> None:
+        transport = httpx.ASGITransport(
+            app=create_app(
+                "http://reference-agent:8090",
+                oauth_public_base_url="http://127.0.0.1:9000",
+            )
+        )
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+        ) as client:
+            response = await client.post(
+                "/",
+                headers={
+                    "A2A-Version": "1.0",
+                    "Accept": "text/event-stream",
+                },
+                json={
+                    "jsonrpc": "2.0",
+                    "id": "stream-test",
+                    "method": "SendStreamingMessage",
+                    "params": {
+                        "message": {
+                            "messageId": "stream-message",
+                            "role": "ROLE_USER",
+                            "parts": [{"text": "stream ABC"}],
+                        }
+                    },
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        events = [
+            json.loads(line.removeprefix("data: "))
+            for line in response.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        results = [event["result"] for event in events]
+        assert "task" in results[0]
+        assert results[1]["statusUpdate"]["status"]["state"] == "TASK_STATE_WORKING"
+        chunks = [result["artifactUpdate"] for result in results if "artifactUpdate" in result]
+        assert [chunk["artifact"]["parts"][0]["text"] for chunk in chunks] == [
+            "A",
+            "B",
+            "C",
+        ]
+        assert [chunk.get("append", False) for chunk in chunks] == [False, True, True]
+        assert [chunk.get("lastChunk", False) for chunk in chunks] == [
+            False,
+            False,
+            True,
+        ]
+        assert results[-1]["statusUpdate"]["status"]["state"] == (
+            "TASK_STATE_COMPLETED"
+        )
+
+    asyncio.run(exercise_stream())

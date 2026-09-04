@@ -96,13 +96,19 @@ class ReferenceAgentExecutor(AgentExecutor):
             )
             return
 
-        await updater.add_artifact(
-            artifact_id="response",
-            name="response",
-            parts=[Part(text=result.text)],
-            append=False,
-            last_chunk=True,
+        chunks = (
+            list(result.text)
+            if result.kind is CommandKind.STREAM
+            else [result.text]
         )
+        for index, chunk in enumerate(chunks):
+            await updater.add_artifact(
+                artifact_id="response",
+                name="response",
+                parts=[Part(text=chunk)],
+                append=index > 0,
+                last_chunk=index == len(chunks) - 1,
+            )
         await updater.complete()
 
     async def _invoke_letta(self, message: str) -> CommandResult:
@@ -164,7 +170,7 @@ def build_agent_card(
             ),
         ],
         capabilities=AgentCapabilities(
-            streaming=False,
+            streaming=True,
             push_notifications=False,
             extended_agent_card=False,
         ),
@@ -203,12 +209,13 @@ def build_agent_card(
                 id="deterministic-interoperability",
                 name="Deterministic interoperability commands",
                 description=(
-                    "Echo, context memory, failure, delay, cancellation, "
-                    "and test observations."
+                    "Echo, ordered streaming, context memory, failure, delay, "
+                    "cancellation, and test observations."
                 ),
                 tags=["a2a", "testing", "deterministic"],
                 examples=[
                     "echo hello",
+                    "stream hello",
                     "remember alpha",
                     "context",
                     "fail expected failure",

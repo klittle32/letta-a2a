@@ -122,6 +122,80 @@ describe("LettaRuntime cancellation", () => {
     await expect(second).resolves.toBe("");
     runtime.claimTerminal("task-2", "completed");
   });
+
+  test("emits only top-level assistant text as public output chunks", async () => {
+    const runtime = createRuntime();
+    const runtimeScope = {
+      agent_id: "agent-id",
+      conversation_id: "conversation-id",
+    };
+    const handlers = new Set<(message: any) => void>();
+    (runtime as any).client = {
+      runtimeStart: async () => ({ success: true, runtime: runtimeScope }),
+      onMessage: (handler: (message: any) => void) => {
+        handlers.add(handler);
+        return () => handlers.delete(handler);
+      },
+      submitInput: async () => ({ accepted: true }),
+      abort: async () => ({ aborted: true }),
+    };
+    (runtime as any).agentId = "agent-id";
+    (runtime as any).contextStore = {
+      get: () => "conversation-id",
+      save: () => undefined,
+    };
+    const chunks: string[] = [];
+    const outcome = runtime.runTurn({
+      ...turn("stream-task"),
+      onAssistantDelta: (text) => chunks.push(text),
+    });
+    await waitUntil(() => handlers.size === 1);
+
+    emit(handlers, streamDelta(runtimeScope, "reasoning_message", "PRIVATE_REASONING"));
+    emit(handlers, {
+      ...streamDelta(runtimeScope, "assistant_message", "PRIVATE_SUBAGENT"),
+      subagent_id: "subagent-1",
+    });
+    const nestedSubagent = streamDelta(
+      runtimeScope,
+      "assistant_message",
+      "PRIVATE_NESTED_SUBAGENT",
+    );
+    (nestedSubagent.delta as Record<string, unknown>).subagent_id = "subagent-2";
+    emit(handlers, nestedSubagent);
+    emit(handlers, {
+      type: "stream_delta",
+      runtime: runtimeScope,
+      delta: {
+        message_type: "client_tool_start",
+        tool_args: "PRIVATE_TOOL_ARGUMENTS",
+      },
+    });
+    emit(
+      handlers,
+      streamDelta(runtimeScope, "tool_return_message", "PRIVATE_TOOL_RESULT"),
+    );
+    emit(handlers, {
+      type: "stream_delta",
+      runtime: runtimeScope,
+      delta: {
+        message_type: "command_end",
+        input: "PRIVATE_COMMAND_INPUT",
+        output: "PRIVATE_COMMAND_OUTPUT",
+      },
+    });
+    emit(
+      handlers,
+      streamDelta(runtimeScope, "future_private_event", "PRIVATE_UNKNOWN"),
+    );
+    emit(handlers, streamDelta(runtimeScope, "assistant_message", "  SAFE_ "));
+    emit(handlers, streamDelta(runtimeScope, "assistant_message", "STREAM  "));
+    emit(handlers, { type: "turn_finished", runtime: runtimeScope });
+
+    await expect(outcome).resolves.toBe("SAFE_ STREAM");
+    expect(chunks).toEqual(["SAFE_", " STREAM"]);
+    expect(JSON.stringify(chunks)).not.toContain("PRIVATE_");
+  });
 });
 
 function createRuntime(): LettaRuntime {
@@ -164,4 +238,20 @@ function emit(
   message: Record<string, unknown>,
 ): void {
   for (const handler of [...handlers]) handler(message);
+}
+
+function streamDelta(
+  runtime: Record<string, string>,
+  messageType: string,
+  content: string,
+): Record<string, unknown> {
+  return {
+    type: "stream_delta",
+    runtime,
+    delta: {
+      type: "message",
+      message_type: messageType,
+      content,
+    },
+  };
 }

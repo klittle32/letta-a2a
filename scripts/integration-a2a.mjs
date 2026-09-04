@@ -129,6 +129,68 @@ async function runChecks() {
   assertGatewayCard(card, "Independent Reference Agent", "reference-agent");
   passed("Agent Card discovery through agentgateway");
 
+  const referenceStream = assertStreamingEvents(
+    await reference.stream("stream REFERENCE_STREAM_OK"),
+    "REFERENCE_STREAM_OK",
+  );
+  const streamedReferenceTask = taskFromPayload(
+    await reference.rpc("GetTask", { id: referenceStream.taskId }),
+  );
+  assert(streamedReferenceTask, "streamed reference task was not persisted");
+  assert(
+    artifactText(streamedReferenceTask) === "REFERENCE_STREAM_OK",
+    "streamed reference task persisted the wrong artifact",
+  );
+  passed("reference-agent ordered SSE artifact streaming");
+
+  const failedStream = await reference.stream("fail STREAM_FAILURE");
+  const failedStatus = failedStream.at(-1)?.statusUpdate?.status;
+  assert(
+    String(failedStatus?.state ?? "").endsWith("FAILED") &&
+      messageText(failedStatus?.message) === "STREAM_FAILURE",
+    "streaming failure did not end with its explicit failure detail",
+  );
+  assert(
+    !failedStream.some((result) => result.artifactUpdate?.lastChunk),
+    "failed stream published a final artifact chunk",
+  );
+  passed("streaming failure remains explicit and non-final");
+
+  const disconnectedStream = await reference.stream("slow 1", undefined, {
+    stopWhen: async (result, results) => {
+      if (!String(result.statusUpdate?.status?.state ?? "").endsWith("WORKING")) {
+        return false;
+      }
+      const taskId = results[0]?.task?.id;
+      const whileConnected = taskFromPayload(
+        await reference.rpc("GetTask", { id: taskId }),
+      );
+      assert(
+        taskState(whileConnected).endsWith("WORKING"),
+        "gateway did not deliver SSE before the task completed",
+      );
+      return true;
+    },
+  });
+  const disconnectedTask = disconnectedStream.find((result) => result.task)?.task;
+  assert(disconnectedTask?.id, "disconnected stream returned no task ID");
+  assert(
+    !disconnectedStream.some((result) =>
+      String(result.statusUpdate?.status?.state ?? "").endsWith("COMPLETED"),
+    ),
+    "disconnect probe consumed the terminal stream event",
+  );
+  const afterDisconnect = await reference.pollUntil(
+    disconnectedTask.id,
+    (task) => isTerminal(taskState(task)),
+  );
+  assert(
+    taskState(afterDisconnect).endsWith("COMPLETED") &&
+      artifactText(afterDisconnect) === "slept: 1",
+    "disconnect unexpectedly canceled or lost the server-side task",
+  );
+  passed("SSE disconnect leaves task execution and retrieval intact");
+
   const echo = await reference.sendAndPoll("echo REFERENCE_DIRECT_OK");
   assert(echo.pollCount > 0, "async echo completed without a GetTask poll");
   assert(echo.state.endsWith("COMPLETED"), `echo ended as ${echo.state}`);
@@ -180,6 +242,21 @@ async function runChecks() {
     const lettaCard = await agentA.card();
     assertGatewayCard(lettaCard, "Agent A", "agent-a");
     passed("Letta Agent Card preservation and URL rewriting");
+
+    const lettaStream = assertStreamingEvents(
+      await agentA.stream(
+        "Reply with exactly LETTA_STREAM_OK and nothing else.",
+      ),
+      "LETTA_STREAM_OK",
+    );
+    const storedLettaStream = taskFromPayload(
+      await agentA.rpc("GetTask", { id: lettaStream.taskId }),
+    );
+    assert(
+      storedLettaStream && artifactText(storedLettaStream) === "LETTA_STREAM_OK",
+      "streamed Letta task did not persist its assembled artifact",
+    );
+    passed("safe Letta assistant text streamed through A2A SSE");
 
     const delegated = await agentA.sendAndPoll(
       "Use a2a_invoke with target reference-agent and message 'echo LETTA_REFERENCE_OK'. Then return only the reference agent's answer.",
@@ -271,6 +348,10 @@ function assertGatewayCard(card, expectedName, target) {
     `${target} Agent Card lost its skills`,
   );
   assert(card.capabilities, `${target} Agent Card lost its capabilities`);
+  assert(
+    card.capabilities.streaming === true,
+    `${target} Agent Card does not advertise streaming`,
+  );
   const oauth = card.securitySchemes?.a2aOAuth?.oauth2SecurityScheme;
   const clientCredentials = oauth?.flows?.clientCredentials;
   assert(clientCredentials, `${target} Agent Card lost OAuth client credentials`);
@@ -603,6 +684,53 @@ function createClient(baseUrl, target) {
       return payload;
     },
 
+    async stream(text, contextId, options = {}) {
+      const accessToken = await tokenProvider.getAccessToken();
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "text/event-stream",
+          "Content-Type": "application/json",
+          "A2A-Version": "1.0",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: randomUUID(),
+          method: "SendStreamingMessage",
+          params: {
+            message: {
+              messageId: randomUUID(),
+              ...(contextId ? { contextId } : {}),
+              role: "ROLE_USER",
+              parts: [{ text }],
+            },
+          },
+        }),
+        signal: AbortSignal.timeout(120_000),
+      });
+      if (!response.ok || !response.body) {
+        const body = await response.text();
+        throw new Error(`SendStreamingMessage failed (${response.status}): ${body}`);
+      }
+      assert(
+        response.headers.get("content-type")?.startsWith("text/event-stream"),
+        `SendStreamingMessage returned ${response.headers.get("content-type")}`,
+      );
+      const results = [];
+      for await (const envelope of parseSse(response.body)) {
+        if (envelope.error) {
+          throw new Error(
+            `SendStreamingMessage returned ${JSON.stringify(envelope.error)}`,
+          );
+        }
+        assert(envelope.result, "stream event contained no result");
+        results.push(envelope.result);
+        if (await options.stopWhen?.(envelope.result, results)) break;
+      }
+      return results;
+    },
+
     async send(text, contextId) {
       const payload = await this.rpc("SendMessage", {
         message: {
@@ -649,6 +777,104 @@ function createClient(baseUrl, target) {
       };
     },
   };
+}
+
+function assertStreamingEvents(results, expectedText) {
+  assert(results.length >= 4, "stream returned too few events");
+  const task = results[0]?.task;
+  assert(task?.id && task?.contextId, "stream did not begin with a task snapshot");
+  assert(
+    String(task.status?.state ?? "").endsWith("SUBMITTED"),
+    "stream task did not begin submitted",
+  );
+  const statusEvents = results.filter((result) => result.statusUpdate);
+  assert(
+    String(statusEvents[0]?.statusUpdate?.status?.state ?? "").endsWith("WORKING"),
+    "stream did not publish working status",
+  );
+  assert(
+    String(statusEvents.at(-1)?.statusUpdate?.status?.state ?? "").endsWith(
+      "COMPLETED",
+    ),
+    "stream did not end completed",
+  );
+  const artifactEvents = results
+    .filter((result) => result.artifactUpdate)
+    .map((result) => result.artifactUpdate);
+  assert(artifactEvents.length > 0, "stream published no artifact chunks");
+  const artifactIds = new Set(
+    artifactEvents.map((event) => event.artifact?.artifactId),
+  );
+  assert(artifactIds.size === 1, "stream changed artifact IDs between chunks");
+  assert(
+    artifactEvents.every(
+      (event, index) => Boolean(event.append) === (index > 0),
+    ),
+    "stream append flags were not ordered",
+  );
+  assert(
+    artifactEvents.every(
+      (event, index) => Boolean(event.lastChunk) === (index === artifactEvents.length - 1),
+    ),
+    "stream lastChunk flags were not terminal",
+  );
+  const text = artifactEvents
+    .map((event) => messageText(event.artifact))
+    .join("");
+  assert(text === expectedText, `unexpected streamed text: ${text}`);
+  const taskIndex = results.findIndex((result) => result.task);
+  const firstArtifactIndex = results.findIndex((result) => result.artifactUpdate);
+  const completedIndex = results.findIndex((result) =>
+    String(result.statusUpdate?.status?.state ?? "").endsWith("COMPLETED"),
+  );
+  assert(
+    taskIndex === 0 && firstArtifactIndex > taskIndex && completedIndex > firstArtifactIndex,
+    "stream events were not task → artifact → completed",
+  );
+  assert(
+    !JSON.stringify(artifactEvents).match(
+      /reasoning_message|tool_call_message|tool_args|command_start|command_end/,
+    ),
+    "stream exposed an internal Letta event",
+  );
+  return { taskId: task.id, contextId: task.contextId, text };
+}
+
+async function* parseSse(body) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      while (true) {
+        const boundary = buffer.match(/\r?\n\r?\n/);
+        if (!boundary || boundary.index === undefined) break;
+        const block = buffer.slice(0, boundary.index);
+        buffer = buffer.slice(boundary.index + boundary[0].length);
+        const event = parseSseBlock(block);
+        if (event) yield event;
+      }
+      if (done) {
+        const event = parseSseBlock(buffer);
+        if (event) yield event;
+        break;
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+}
+
+function parseSseBlock(block) {
+  const data = block
+    .replace(/^\uFEFF/u, "")
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n");
+  return data ? JSON.parse(data) : undefined;
 }
 
 function taskFromPayload(payload) {

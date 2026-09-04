@@ -63,4 +63,4 @@ For the Letta request, the bridge maps the incoming A2A message into a Letta tur
 
 - The external agent's `echo` result is deterministic.
 - The Letta response is a live model-backed demonstration and depends on provider availability and instruction following.
-- This example polls for completion; streaming is introduced later.
+- This example polls for completion; [Example 09](../09-streaming/) demonstrates streaming.

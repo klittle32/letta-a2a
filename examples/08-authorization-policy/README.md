@@ -12,6 +12,21 @@ Agentgateway then applies a fail-closed allowlist:
 
 The policy is deterministic gateway configuration. No model is asked to decide whether a caller is authorized.
 
+This is a frozen historical stage. Example 09 enabled streaming while retaining this authorization policy. To run the exact pre-streaming implementation without changing your current checkout, create a detached worktree at its verified commit:
+
+```bash
+git worktree add /tmp/letta-a2a-example-08 7bfd16b
+cd /tmp/letta-a2a-example-08
+cp .env.example .env
+nvim .env
+```
+
+Remove that detached worktree when finished:
+
+```bash
+git worktree remove /tmp/letta-a2a-example-08
+```
+
 Executed verification is retained in [`docs/evidence/2026-09-04-example-08.md`](../../docs/evidence/2026-09-04-example-08.md).
 
 ## Message flow

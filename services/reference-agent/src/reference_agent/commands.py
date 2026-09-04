@@ -5,13 +5,14 @@ from enum import Enum
 
 
 USAGE = (
-    "usage: echo TEXT | remember TEXT | context | fail [TEXT] | "
+    "usage: echo TEXT | stream TEXT | remember TEXT | context | fail [TEXT] | "
     "slow SECONDS | ask-letta TEXT"
 )
 
 
 class CommandKind(Enum):
     COMPLETE = "complete"
+    STREAM = "stream"
     FAIL = "fail"
     SLOW = "slow"
 
@@ -34,6 +35,9 @@ class CommandEngine:
 
         if command == "echo" and separator and argument:
             return CommandResult(CommandKind.COMPLETE, argument)
+
+        if command == "stream" and separator and argument:
+            return CommandResult(CommandKind.STREAM, argument)
 
         if command == "remember" and separator and argument:
             self._memory.setdefault(context_id, []).append(argument)

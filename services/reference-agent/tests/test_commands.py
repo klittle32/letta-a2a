@@ -12,6 +12,13 @@ def test_echo_returns_exact_text() -> None:
     assert result.text == "exact response"
 
 
+def test_stream_returns_text_for_incremental_delivery() -> None:
+    result = CommandEngine().handle("ctx-1", "stream ABC")
+
+    assert result.kind is CommandKind.STREAM
+    assert result.text == "ABC"
+
+
 def test_context_memory_is_isolated_and_ordered() -> None:
     engine = CommandEngine()
 

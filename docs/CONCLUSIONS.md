@@ -16,11 +16,12 @@ The lab has answered the architectural question. Do not add more protocol machin
 - Agentgateway preserves and rewrites the richer backend Agent Cards rather than replacing them with minimal config-defined cards.
 - The gateway-published cards advertise an OAuth2 client-credentials flow and required scope. Calling agents exchange credentials, cache short-lived JWTs, and refresh near expiry.
 - Agentgateway verifies the local issuer, audience, RSA signature, expiry/not-before, subject, role, and scope. Discovery requires `a2a.discover`; invocation requires `a2a.invoke` plus an `operator` or `agent` role. Authentication failures receive `401`, while authenticated but unauthorized callers receive `403`.
+- Agentgateway preserves ordered A2A SSE streams. Both agents publish task/status/artifact events; the Letta bridge exposes only top-level assistant text and persists the assembled artifact for later retrieval.
 
 ## What it did not prove
 
 - Production identity, tenant isolation, resource-level authorization, public endpoint hardening, or durable A2A task storage. The local OAuth server and fixed role registry are only deterministic fixtures.
-- Streaming, push notifications, or file artifacts.
+- Push notifications or file artifacts.
 - Communication between two physical hosts. The ordinary demo uses isolated containers on one host; the same protocol path can be extended across hosts once each gateway is published securely.
 - Deterministic LLM behavior. Protocol-only tests are deterministic; live Letta delegation still depends on the configured model provider.
 - Complete A2A 1.0 gateway conformance, signed-card rewriting, or database-backed A2A logs. See [`GATEWAY_DECISION.md`](GATEWAY_DECISION.md).
@@ -29,7 +30,7 @@ The lab has answered the architectural question. Do not add more protocol machin
 
 The progressive, observable demonstrations now live in [`examples/`](../examples/README.md). Start with Agent Card discovery and basic messaging, then continue through context, [Letta delegating to an external A2A agent](../examples/04-letta-to-external-a2a-agent/), and the [external agent delegating back to Letta](../examples/05-external-a2a-agent-to-letta/).
 
-The examples intentionally use Docker on one host. Multi-host deployment is a networking and operations concern rather than part of this focused protocol reference. Example 06 preserves the static-key stage, Example 07 preserves shared-identity OAuth, and Example 08 is the current caller-aware stack.
+The examples intentionally use Docker on one host. Multi-host deployment is a networking and operations concern rather than part of this focused protocol reference. Examples 06–08 preserve the static-key, shared-identity OAuth, and caller-authorization stages; Example 09 is the current streaming stack.
 
 The earlier Letta-to-Letta proof remains available outside the primary two-implementation learning path:
 
