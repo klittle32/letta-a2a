@@ -83,9 +83,10 @@ Follow the numbered learning path in [`examples/`](examples/README.md). The read
 - `10` — [Failure and cancellation](examples/10-failure-and-cancellation/)
 - `11` — [Push notifications](examples/11-push-notifications/)
 - `12` — Hermes TUI to Google ADK ([planned](docs/EXAMPLE_12_IMPLEMENTATION_PLAN.md))
+- `13` — Portable A2A CLI skill ([planned](docs/EXAMPLE_13_IMPLEMENTATION_PLAN.md))
 - `14` — A2A to ACPX Claude ([planned](docs/EXAMPLE_14_IMPLEMENTATION_PLAN.md))
 
-Implemented examples are complete through Example 11. The conceptual examples share the Compose topology; Examples 06–08 retain exact historical checkpoints because later stages intentionally replaced their security policy. Polling walkthroughs reuse `scripts/smoke-a2a.mjs`, while streaming uses `curl -N` and the integration client's SSE parser. Examples 12 and 14 are bounded plans for concrete cross-runtime use cases; no empty example directories exist before their behavior is ready. Example 13 remains unassigned.
+Implemented examples are complete through Example 11. The conceptual examples share the Compose topology; Examples 06–08 retain exact historical checkpoints because later stages intentionally replaced their security policy. Polling walkthroughs reuse `scripts/smoke-a2a.mjs`, while streaming uses `curl -N` and the integration client's SSE parser. Examples 12–14 are bounded plans for concrete cross-runtime use cases; no empty example directories exist before their behavior is ready.
 
 ## Development checks
 

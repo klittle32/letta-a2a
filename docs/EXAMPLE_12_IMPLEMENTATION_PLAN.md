@@ -35,7 +35,7 @@ Hermes is outbound-only in this example. Do not enable its inbound A2A listener;
 3. The `a2a` toolset is explicitly enabled for platform `cli`, a named `google-adk` peer is configured, and `/tools` in the TUI shows `a2a_call`.
 4. The remote service is built with pinned `google-adk[a2a]` and A2A Python SDK 1.x dependencies, wraps one `root_agent` with `to_a2a()`, and exposes text input/output only on the private Compose network. Its supplied A2A 1.0 Agent Card declares the existing OAuth2 client-credentials scheme and required scopes rather than advertising an unauthenticated backend.
 5. The only Hermes-to-ADK network path uses `http://agentgateway:4000/a2a/google-adk`; the ADK port is not published to the host. Every JSON-RPC interface advertised by the gateway-published card points back through that gateway route and contains no backend hostname, backend port, `localhost`, or `0.0.0.0`.
-6. A dedicated OAuth client with role `agent` and scopes `a2a.discover a2a.invoke` is added for Hermes. Gateway authorization limits that subject to `/a2a/google-adk` while preserving the existing identities' routes. Its client secret and access token never enter source, image layers, Agent Cards, or logs.
+6. A dedicated OAuth client with role `agent` and scopes `a2a.discover a2a.invoke` is added for Hermes. The named-peer configuration fixes Hermes's target to `/a2a/google-adk`; the current gateway still authorizes eligible routes by role, scope, method, and path shape rather than subject-specific route grants. The client secret and access token never enter source, image layers, Agent Cards, or logs.
 7. A launcher obtains a fresh client-credentials token immediately before starting the TUI, exports it only to that process, and lets Hermes resolve `${HERMES_A2A_ACCESS_TOKEN}` in its peer configuration. The initial demo TTL is 900 seconds, with an explicit relaunch-after-expiry instruction; the example does not add a hidden refresh daemon.
 8. From the TUI, the operator asks Hermes to use `a2a_call` against `google-adk`. The visible tool event and gateway log prove that the built-in tool—not `curl`, a shell wrapper, or a model-authored imitation—made the call.
 9. A first remote turn stores a distinctive codeword. A second TUI turn calls the same peer with the prior `context_id`, and the ADK agent returns that codeword. Structured gateway logs plus an ADK request spy/evidence record correlate distinct request/message IDs with one shared context ID; the proof does not rely only on model-visible prose.
@@ -58,7 +58,7 @@ a2a_agents:
     capabilities: [conversation]
 ```
 
-The launcher performs one client-credentials exchange, validates that the token response is complete, exports the access token, and `exec`s `hermes --tui`. It must not print the token or write it into the mounted Hermes home. Use a dedicated, route-limited subject rather than reusing the operator, bridge, or reference-agent identity.
+The launcher performs one client-credentials exchange, validates that the token response is complete, exports the access token, and `exec`s `hermes --tui`. It must not print the token or write it into the mounted Hermes home. Use a dedicated subject rather than reusing the operator, bridge, or reference-agent identity; do not claim gateway-enforced subject-to-route binding in this slice.
 
 Hermes `v2026.8.31` has two relevant upstream constraints:
 
@@ -99,10 +99,12 @@ The pinned Hermes client sends `SendMessage` and waits for that HTTP response. I
 
 These are intended seams, not permission to duplicate the primary Compose stack. Prefer one optional Compose profile and shared gateway/auth fixtures.
 
+Example 13 deliberately reuses this ADK service, Agent Card, and gateway route. Keep those seams generic enough for a second authenticated caller without adding Example 13 policy to the ADK agent itself.
+
 ## Test-first slices
 
 1. Add failing configuration tests for the exact Hermes/ADK pins, optional services, private networking, gateway route, and absence of committed credentials.
-2. Add failing OAuth and gateway-authorization tests for a distinct Hermes client identity, allowed scopes/role, access only to the ADK route, bad credentials, and token non-disclosure.
+2. Add failing OAuth and gateway-authorization tests for a distinct Hermes client identity, allowed scopes/role, the fixed named-peer route, bad credentials, and token non-disclosure.
 3. Add failing ADK tests using a deterministic fake model/session seam: card generation, first turn, second turn with the same context, malformed input, and bounded failure.
 4. Implement the minimal ADK `root_agent`, `to_a2a()` app, container, route, and health check.
 5. Add failing launcher tests for token acquisition, `${HERMES_A2A_ACCESS_TOKEN}` configuration, no stdout/stderr leakage, expiry handling, TTY preservation, and failed preflight.
