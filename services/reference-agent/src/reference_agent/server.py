@@ -3,6 +3,10 @@ from __future__ import annotations
 import asyncio
 import os
 
+from contextlib import asynccontextmanager
+
+import httpx
+
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -35,6 +39,11 @@ from reference_agent.outbound import (
     ClientCredentialsTokenProvider,
     OfficialA2AClient,
     OutboundA2AClient,
+)
+from reference_agent.push_notifications import (
+    AuthenticatedPushNotificationSender,
+    PushNotificationPolicy,
+    ValidatingPushNotificationConfigStore,
 )
 
 
@@ -97,9 +106,7 @@ class ReferenceAgentExecutor(AgentExecutor):
             return
 
         chunks = (
-            list(result.text)
-            if result.kind is CommandKind.STREAM
-            else [result.text]
+            list(result.text) if result.kind is CommandKind.STREAM else [result.text]
         )
         for index, chunk in enumerate(chunks):
             await updater.add_artifact(
@@ -171,7 +178,7 @@ def build_agent_card(
         ],
         capabilities=AgentCapabilities(
             streaming=True,
-            push_notifications=False,
+            push_notifications=True,
             extended_agent_card=False,
         ),
         security_schemes={
@@ -256,6 +263,9 @@ def create_app(
     *,
     oauth_public_base_url: str = "http://127.0.0.1:9000",
     outbound_client: OutboundA2AClient | None = None,
+    push_http_client: httpx.AsyncClient | None = None,
+    push_callback_url: str = "http://webhook-receiver:8100/callbacks/a2a",
+    push_callback_token: str = "a2a-lab-callback-secret",
 ) -> Starlette:
     card = build_agent_card(
         public_base_url,
@@ -282,16 +292,49 @@ def create_app(
             token_provider=token_provider,
             expected_agent_name="Agent A",
         )
+    push_policy = PushNotificationPolicy(
+        callback_url=push_callback_url,
+        bearer_token=push_callback_token,
+    )
+    push_store = ValidatingPushNotificationConfigStore(push_policy)
+    owns_push_http_client = push_http_client is None
+    if push_http_client is None:
+        push_http_client = httpx.AsyncClient(
+            trust_env=False,
+            follow_redirects=False,
+            timeout=push_policy.timeout_seconds,
+        )
+    push_sender = AuthenticatedPushNotificationSender(
+        push_http_client,
+        push_store,
+        push_policy,
+    )
     handler = DefaultRequestHandler(
         agent_executor=ReferenceAgentExecutor(outbound_client=outbound_client),
         task_store=InMemoryTaskStore(),
         agent_card=card,
+        push_config_store=push_store,
+        push_sender=push_sender,
     )
+
+    @asynccontextmanager
+    async def lifespan(_app: Starlette):
+        try:
+            yield
+        finally:
+            try:
+                await handler.aclose()
+            finally:
+                try:
+                    await push_sender.aclose()
+                finally:
+                    if owns_push_http_client:
+                        await push_http_client.aclose()
 
     async def get_agent_card(_request: Request) -> JSONResponse:
         return JSONResponse(serialize_agent_card(card))
 
-    return Starlette(
+    application = Starlette(
         routes=[
             Route("/healthz", healthz, methods=["GET"]),
             Route(
@@ -304,8 +347,13 @@ def create_app(
                 "/",
                 enable_v0_3_compat=True,
             ),
-        ]
+        ],
+        lifespan=lifespan,
     )
+    application.state.a2a_handler = handler
+    application.state.push_http_client = push_http_client
+    application.state.push_sender = push_sender
+    return application
 
 
 app = create_app(
@@ -313,5 +361,13 @@ app = create_app(
     oauth_public_base_url=os.environ.get(
         "OAUTH_PUBLIC_BASE_URL",
         "http://127.0.0.1:9000",
+    ),
+    push_callback_url=os.environ.get(
+        "PUSH_CALLBACK_URL",
+        "http://webhook-receiver:8100/callbacks/a2a",
+    ),
+    push_callback_token=os.environ.get(
+        "PUSH_CALLBACK_TOKEN",
+        "a2a-lab-callback-secret",
     ),
 )

@@ -133,4 +133,4 @@ Breaking the SSE connection does not imply A2A cancellation. The deterministic r
 - The outbound `a2a_invoke` clients still use asynchronous task creation plus polling. Streaming is currently implemented for inbound A2A calls, not nested outbound delegation.
 - The reference-agent probe proves that client disconnect is not cancellation. A provider-backed Letta disconnect was not added to this example. This proves later `GetTask` retrieval, not `SubscribeToTask` resumption.
 - Active tasks remain in memory, as in earlier examples. Process restarts still lose A2A task records.
-- Push notifications remain the final roadmap feature.
+- Push notifications are demonstrated separately in Example 11; an SSE connection itself remains a streaming response, not a callback registration.

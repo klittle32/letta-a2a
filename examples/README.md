@@ -44,7 +44,7 @@ Streaming was outside the original gateway-selection matrix. Example 09 subseque
 | 08 | [`authorization-policy`](08-authorization-policy/) | Historical stage; verified at `7bfd16b` | Permit or deny A2A operations based on authenticated caller identity and scopes. |
 | 09 | [`streaming`](09-streaming/) | Documented; protocol and live suites verified | Translate safe Letta App Server WebSocket events into A2A Server-Sent Events. |
 | 10 | [`failure-and-cancellation`](10-failure-and-cancellation/) | Documented; manually verified | Observe explicit failure and cancellation, including outer-to-child cancellation propagation. |
-| 11 | `push-notifications` | Planned final feature | Register an authenticated webhook, disconnect, and receive asynchronous task updates. |
+| 11 | [`push-notifications`](11-push-notifications/) | Documented; protocol and live suites verified | Register an authenticated webhook, let the initiating request return, and receive asynchronous task updates. |
 
 ## Scenario details
 
@@ -97,7 +97,7 @@ Demonstrate deterministic remote failure, direct task cancellation, and cancella
 
 ### 11 — Push notifications
 
-Register an authenticated webhook for a long-running task, disconnect the initiating client, and receive a later task update by HTTP POST. Verify callback authentication, duplicate-delivery safety, and retrieval of the final task. This stays last because it adds a second inbound security boundary and delivery-reliability concerns.
+Register an authenticated webhook for a long-running task, let the initiating request return, and receive a later task update by HTTP POST without task polling. Verify callback authentication, duplicate-delivery safety, and retrieval of the final task. This stays last because it adds a second inbound security boundary and delivery-reliability concerns.
 
 ## Required README shape
 

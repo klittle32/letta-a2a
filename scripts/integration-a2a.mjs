@@ -23,8 +23,18 @@ const oauthPort =
   process.env.A2A_INTEGRATION_OAUTH_PORT ??
   process.env.OAUTH_PORT ??
   (managed ? await findFreePort() : "9000");
+const pushReceiverPort =
+  process.env.A2A_INTEGRATION_PUSH_RECEIVER_PORT ??
+  process.env.PUSH_RECEIVER_PORT ??
+  (managed ? await findFreePort() : "8100");
 const oauthTokenUrl = `http://127.0.0.1:${oauthPort}/token`;
 const oauthIssuer = `http://127.0.0.1:${oauthPort}`;
+const pushReceiverBaseUrl = `http://127.0.0.1:${pushReceiverPort}`;
+const pushCallbackUrl = "http://webhook-receiver:8100/callbacks/a2a";
+const pushCallbackToken =
+  process.env.PUSH_CALLBACK_TOKEN ?? "a2a-lab-callback-secret";
+const pushObserverToken =
+  process.env.PUSH_OBSERVER_TOKEN ?? "a2a-lab-observer-secret";
 const oauthClientId = process.env.OAUTH_CLIENT_ID ?? "operator-client";
 const oauthClientSecret =
   process.env.OAUTH_CLIENT_SECRET ?? "operator-client-secret";
@@ -55,6 +65,9 @@ const composeEnv = {
   A2A_GATEWAY_PORT: gatewayPort,
   A2A_GATEWAY_UI_PORT: gatewayUiPort,
   OAUTH_PORT: oauthPort,
+  PUSH_RECEIVER_PORT: pushReceiverPort,
+  PUSH_CALLBACK_TOKEN: pushCallbackToken,
+  PUSH_OBSERVER_TOKEN: pushObserverToken,
   OAUTH_CLIENT_ID: oauthClientId,
   OAUTH_CLIENT_SECRET: oauthClientSecret,
   OAUTH_OBSERVER_CLIENT_ID: observerClientId,
@@ -88,6 +101,7 @@ try {
       "--wait-timeout",
       "240",
       "reference-agent",
+      "webhook-receiver",
       "agentgateway",
       ...(liveLetta ? ["bridge"] : []),
     ]);
@@ -128,6 +142,15 @@ async function runChecks() {
   await assertGatewayAuthentication();
   assertGatewayCard(card, "Independent Reference Agent", "reference-agent");
   passed("Agent Card discovery through agentgateway");
+
+  await assertPushReceiverAuthentication();
+  await assertPushRoundTrip(
+    reference,
+    "slow 1",
+    "slept: 1",
+    "reference-agent",
+  );
+  passed("authenticated duplicate-safe reference-agent push delivery");
 
   const referenceStream = assertStreamingEvents(
     await reference.stream("stream REFERENCE_STREAM_OK"),
@@ -243,6 +266,14 @@ async function runChecks() {
     assertGatewayCard(lettaCard, "Agent A", "agent-a");
     passed("Letta Agent Card preservation and URL rewriting");
 
+    await assertPushRoundTrip(
+      agentA,
+      "Use a2a_invoke with target reference-agent and message 'slow 2'. After it returns, reply with exactly LETTA_PUSH_OK and nothing else.",
+      "LETTA_PUSH_OK",
+      "agent-a",
+    );
+    passed("authenticated duplicate-safe Letta push delivery");
+
     const lettaStream = assertStreamingEvents(
       await agentA.stream(
         "Reply with exactly LETTA_STREAM_OK and nothing else.",
@@ -351,6 +382,10 @@ function assertGatewayCard(card, expectedName, target) {
   assert(
     card.capabilities.streaming === true,
     `${target} Agent Card does not advertise streaming`,
+  );
+  assert(
+    card.capabilities.pushNotifications === true,
+    `${target} Agent Card does not advertise push notifications`,
   );
   const oauth = card.securitySchemes?.a2aOAuth?.oauth2SecurityScheme;
   const clientCredentials = oauth?.flows?.clientCredentials;
@@ -603,6 +638,7 @@ function assertLogsOmitCredentials() {
     "agentgateway",
     "bridge",
     "reference-agent",
+    "webhook-receiver",
     "agent-a",
     "agent-b",
   ]);
@@ -731,7 +767,7 @@ function createClient(baseUrl, target) {
       return results;
     },
 
-    async send(text, contextId) {
+    async send(text, contextId, options = {}) {
       const payload = await this.rpc("SendMessage", {
         message: {
           messageId: randomUUID(),
@@ -739,7 +775,12 @@ function createClient(baseUrl, target) {
           role: "ROLE_USER",
           parts: [{ text }],
         },
-        configuration: { returnImmediately: true },
+        configuration: {
+          returnImmediately: true,
+          ...(options.pushConfig
+            ? { taskPushNotificationConfig: options.pushConfig }
+            : {}),
+        },
       });
       const task = taskFromPayload(payload);
       assert(task, "asynchronous SendMessage returned no task");
@@ -777,6 +818,181 @@ function createClient(baseUrl, target) {
       };
     },
   };
+}
+
+async function assertPushReceiverAuthentication() {
+  const payload = JSON.stringify({
+    statusUpdate: {
+      taskId: "authentication-probe",
+      contextId: "authentication-probe",
+      status: { state: "TASK_STATE_COMPLETED" },
+    },
+  });
+  const missing = await fetch(`${pushReceiverBaseUrl}/callbacks/a2a`, {
+    method: "POST",
+    headers: { "Content-Type": "application/a2a+json" },
+    body: payload,
+  });
+  const wrong = await fetch(`${pushReceiverBaseUrl}/callbacks/a2a`, {
+    method: "POST",
+    headers: {
+      Authorization: "Bearer wrong-callback-secret",
+      "Content-Type": "application/a2a+json",
+    },
+    body: payload,
+  });
+  assert(missing.status === 401, `missing callback auth returned ${missing.status}`);
+  assert(wrong.status === 401, `wrong callback auth returned ${wrong.status}`);
+  const observation = await fetch(
+    `${pushReceiverBaseUrl}/notifications?taskId=authentication-probe`,
+  );
+  assert(
+    observation.status === 401,
+    `missing observation auth returned ${observation.status}`,
+  );
+}
+
+async function assertPushRoundTrip(client, text, expectedText, label) {
+  const primaryId = `${label}-primary-${randomUUID()}`;
+  const duplicateId = `${label}-duplicate-${randomUUID()}`;
+  const initial = await client.send(text, undefined, {
+    pushConfig: callbackConfig(primaryId),
+  });
+  assert(
+    !isTerminal(taskState(initial)),
+    `${label} push task completed before the initiating request returned`,
+  );
+
+  if (label === "reference-agent") {
+    let rejected = false;
+    try {
+      await client.rpc(
+        "CreateTaskPushNotificationConfig",
+        callbackConfig(`forbidden-${randomUUID()}`, initial.id, {
+          url: "http://169.254.169.254/latest/meta-data",
+        }),
+      );
+    } catch {
+      rejected = true;
+    }
+    assert(rejected, "disallowed callback URL was accepted");
+  }
+
+  await client.rpc(
+    "CreateTaskPushNotificationConfig",
+    callbackConfig(duplicateId, initial.id),
+  );
+  const visible = (
+    await client.rpc("GetTaskPushNotificationConfig", {
+      taskId: initial.id,
+      id: primaryId,
+    })
+  ).result;
+  assert(visible?.url === pushCallbackUrl, `${label} returned the wrong callback URL`);
+  assert(
+    !visible?.token && !visible?.authentication?.credentials,
+    `${label} disclosed stored callback credentials`,
+  );
+  const listed = (
+    await client.rpc("ListTaskPushNotificationConfigs", {
+      taskId: initial.id,
+      pageSize: 10,
+    })
+  ).result;
+  assert(
+    listed.configs?.length === 2,
+    `${label} did not retain both duplicate-delivery configurations`,
+  );
+  assert(
+    !JSON.stringify(listed).includes(pushCallbackToken),
+    `${label} list response disclosed callback credentials`,
+  );
+
+  const observed = await waitForPushTerminal(initial.id);
+  const terminalNotifications = observed.notifications.filter((notification) =>
+    isTerminal(
+      String(notification.payload?.statusUpdate?.status?.state ?? ""),
+    ),
+  );
+  assert(
+    observed.currentState === "TASK_STATE_COMPLETED",
+    `${label} callback ended as ${observed.currentState}`,
+  );
+  assert(
+    terminalNotifications.length === 1 &&
+      terminalNotifications[0].deliveryCount === 2,
+    `${label} receiver did not deduplicate two terminal deliveries`,
+  );
+  assert(
+    !JSON.stringify(observed).includes(pushCallbackToken),
+    `${label} callback ledger exposed its Bearer credential`,
+  );
+
+  const finalTask = taskFromPayload(
+    await client.rpc("GetTask", { id: initial.id }),
+  );
+  assert(finalTask, `${label} authoritative task was unavailable after callback`);
+  assert(
+    taskState(finalTask).endsWith("COMPLETED") &&
+      artifactText(finalTask) === expectedText,
+    `${label} authoritative task did not match the terminal callback`,
+  );
+
+  for (const id of [primaryId, duplicateId]) {
+    await client.rpc("DeleteTaskPushNotificationConfig", {
+      taskId: initial.id,
+      id,
+    });
+  }
+  const afterDelete = (
+    await client.rpc("ListTaskPushNotificationConfigs", {
+      taskId: initial.id,
+      pageSize: 10,
+    })
+  ).result;
+  assert(
+    (afterDelete.configs ?? []).length === 0,
+    `${label} callback deletion failed`,
+  );
+}
+
+function callbackConfig(id, taskId = "", overrides = {}) {
+  return {
+    id,
+    taskId,
+    url: pushCallbackUrl,
+    token: "",
+    authentication: {
+      scheme: "Bearer",
+      credentials: pushCallbackToken,
+    },
+    ...overrides,
+  };
+}
+
+async function waitForPushTerminal(taskId) {
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    const response = await fetch(
+      `${pushReceiverBaseUrl}/notifications?taskId=${encodeURIComponent(taskId)}`,
+      {
+        headers: { Authorization: `Bearer ${pushObserverToken}` },
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`push observation failed with HTTP ${response.status}`);
+    }
+    const observed = await response.json();
+    const terminal = observed.notifications?.find((notification) =>
+      isTerminal(
+        String(notification.payload?.statusUpdate?.status?.state ?? ""),
+      ),
+    );
+    if (terminal?.deliveryCount >= 2) return observed;
+    await sleep(50);
+  }
+  throw new Error(`timed out waiting for terminal push notification for ${taskId}`);
 }
 
 function assertStreamingEvents(results, expectedText) {
@@ -938,6 +1154,8 @@ function sensitiveValues() {
     deniedClientSecret,
     bridgeClientSecret,
     referenceClientSecret,
+    pushCallbackToken,
+    pushObserverToken,
     "wrong-secret",
     "stale-client-secret",
     ...issuedTokens,

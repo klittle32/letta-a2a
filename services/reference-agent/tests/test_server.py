@@ -1,6 +1,8 @@
 import asyncio
 import json
 
+from unittest.mock import AsyncMock
+
 import httpx
 
 from reference_agent.server import build_agent_card, create_app, serialize_agent_card
@@ -18,6 +20,7 @@ def test_agent_card_advertises_only_implemented_protocols() -> None:
         "0.3",
     ]
     assert card.capabilities.streaming is True
+    assert card.capabilities.push_notifications is True
     assert card.supported_interfaces[0].url == "http://reference-agent:8090/"
     oauth = card.security_schemes["a2aOAuth"].oauth2_security_scheme
     assert oauth.description == "OAuth 2.0 client credentials enforced by agentgateway."
@@ -62,6 +65,21 @@ def test_agent_card_advertises_only_implemented_protocols() -> None:
     assert "security" not in serialized
     delegation = next(skill for skill in card.skills if skill.id == "letta-delegation")
     assert delegation.examples == ["ask-letta Reply with exactly hello"]
+
+
+def test_app_lifespan_closes_handler_and_owned_push_client() -> None:
+    async def exercise() -> None:
+        app = create_app("http://reference-agent:8090")
+        close = AsyncMock()
+        app.state.a2a_handler.aclose = close
+
+        async with app.router.lifespan_context(app):
+            assert app.state.push_http_client.is_closed is False
+
+        close.assert_awaited_once_with()
+        assert app.state.push_http_client.is_closed is True
+
+    asyncio.run(exercise())
 
 
 def test_health_and_agent_card_routes() -> None:
@@ -136,7 +154,9 @@ def test_streaming_route_emits_ordered_artifact_chunks() -> None:
         results = [event["result"] for event in events]
         assert "task" in results[0]
         assert results[1]["statusUpdate"]["status"]["state"] == "TASK_STATE_WORKING"
-        chunks = [result["artifactUpdate"] for result in results if "artifactUpdate" in result]
+        chunks = [
+            result["artifactUpdate"] for result in results if "artifactUpdate" in result
+        ]
         assert [chunk["artifact"]["parts"][0]["text"] for chunk in chunks] == [
             "A",
             "B",

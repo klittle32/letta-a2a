@@ -18,6 +18,10 @@ import { LettaAgentExecutor } from "./executor.js";
 import { LettaRuntime } from "./letta-runtime.js";
 import { createAgentCard, serializeAgentCard } from "./mapping.js";
 import { ClientCredentialsTokenProvider } from "./oauth-client.js";
+import {
+  LabPushNotificationSender,
+  ValidatingPushNotificationStore,
+} from "./push-notifications.js";
 
 const port = positiveInteger(process.env.PORT, 8080, "PORT");
 const turnTimeoutMs = positiveInteger(
@@ -57,6 +61,8 @@ const oauthPublicBaseUrl = requiredEnvironment("OAUTH_PUBLIC_BASE_URL").replace(
   /\/$/,
   "",
 );
+const pushCallbackUrl = requiredEnvironment("PUSH_CALLBACK_URL");
+const pushCallbackToken = requiredEnvironment("PUSH_CALLBACK_TOKEN");
 
 const runtimes = definitions.map(
   (definition) =>
@@ -92,10 +98,17 @@ for (const runtime of runtimes) {
     },
     requiredScopes: ["a2a.invoke"],
   });
+  const pushStore = new ValidatingPushNotificationStore(
+    pushCallbackUrl,
+    pushCallbackToken,
+  );
   const handler = new DefaultRequestHandler(
     card,
     new InMemoryTaskStore(),
     new LettaAgentExecutor(runtime),
+    undefined,
+    pushStore,
+    new LabPushNotificationSender(pushStore),
   );
   const router = express.Router();
   router.use(

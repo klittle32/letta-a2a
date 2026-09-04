@@ -117,6 +117,34 @@ describe("primary agentgateway topology", () => {
       "a2a.discover a2a.invoke",
     );
     expect(compose.services["reference-agent"].environment.A2A_GATEWAY_KEY).toBeUndefined();
+    expect(compose.services.bridge.environment.PUSH_CALLBACK_URL).toBe(
+      "http://webhook-receiver:8100/callbacks/a2a",
+    );
+    expect(compose.services["reference-agent"].environment.PUSH_CALLBACK_URL).toBe(
+      "http://webhook-receiver:8100/callbacks/a2a",
+    );
+    expect(compose.services.bridge.environment.PUSH_CALLBACK_TOKEN).toBe(
+      "${PUSH_CALLBACK_TOKEN:-a2a-lab-callback-secret}",
+    );
+
+    const receiver = compose.services["webhook-receiver"];
+    expect(receiver.command).toEqual([
+      "uvicorn",
+      "reference_agent.webhook_receiver:app",
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "8100",
+    ]);
+    expect(receiver.ports).toEqual([
+      "127.0.0.1:${PUSH_RECEIVER_PORT:-8100}:8100",
+    ]);
+    expect(receiver.environment.PUSH_CALLBACK_TOKEN).toBe(
+      "${PUSH_CALLBACK_TOKEN:-a2a-lab-callback-secret}",
+    );
+    expect(receiver.environment.PUSH_OBSERVER_TOKEN).toBe(
+      "${PUSH_OBSERVER_TOKEN:-a2a-lab-observer-secret}",
+    );
 
     const authServer = compose.services["auth-server"];
     expect(authServer.command).toEqual([

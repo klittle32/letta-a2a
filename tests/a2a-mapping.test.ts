@@ -87,6 +87,7 @@ describe("A2A and Letta mapping", () => {
     expect(card.supportedInterfaces[0]?.protocolVersion).toBe("1.0");
     expect(card.supportedInterfaces[1]?.protocolVersion).toBe("0.3");
     expect(card.capabilities?.streaming).toBe(true);
+    expect(card.capabilities?.pushNotifications).toBe(true);
     expect(card.securitySchemes).toEqual({
       a2aOAuth: {
         scheme: {

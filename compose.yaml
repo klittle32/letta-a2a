@@ -110,6 +110,8 @@ services:
       OAUTH_CLIENT_ID: ${OAUTH_BRIDGE_CLIENT_ID:-bridge-client}
       OAUTH_CLIENT_SECRET: ${OAUTH_BRIDGE_CLIENT_SECRET:-bridge-client-secret}
       OAUTH_SCOPE: a2a.discover a2a.invoke
+      PUSH_CALLBACK_URL: http://webhook-receiver:8100/callbacks/a2a
+      PUSH_CALLBACK_TOKEN: ${PUSH_CALLBACK_TOKEN:-a2a-lab-callback-secret}
       AGENT_DEFINITIONS: >-
         [{"key":"agent-a","displayName":"Agent A","appServerUrl":"ws://agent-a:4500","appServerToken":"${LETTA_APP_SERVER_TOKEN:-a2a-lab-app-server-token}"},{"key":"agent-b","displayName":"Agent B","appServerUrl":"ws://agent-b:4500","appServerToken":"${LETTA_APP_SERVER_TOKEN:-a2a-lab-app-server-token}"}]
     volumes:
@@ -121,6 +123,8 @@ services:
       agent-a:
         condition: service_healthy
       agent-b:
+        condition: service_healthy
+      webhook-receiver:
         condition: service_healthy
     healthcheck:
       test:
@@ -148,6 +152,8 @@ services:
       OAUTH_CLIENT_ID: ${OAUTH_REFERENCE_CLIENT_ID:-reference-agent-client}
       OAUTH_CLIENT_SECRET: ${OAUTH_REFERENCE_CLIENT_SECRET:-reference-agent-client-secret}
       OAUTH_SCOPE: a2a.discover a2a.invoke
+      PUSH_CALLBACK_URL: http://webhook-receiver:8100/callbacks/a2a
+      PUSH_CALLBACK_TOKEN: ${PUSH_CALLBACK_TOKEN:-a2a-lab-callback-secret}
     networks: [a2a-lab]
     healthcheck:
       test:
@@ -164,6 +170,41 @@ services:
     depends_on:
       auth-server:
         condition: service_healthy
+      webhook-receiver:
+        condition: service_healthy
+
+  webhook-receiver:
+    build:
+      context: ./services/reference-agent
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command:
+      [
+        "uvicorn",
+        "reference_agent.webhook_receiver:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8100",
+      ]
+    environment:
+      PUSH_CALLBACK_TOKEN: ${PUSH_CALLBACK_TOKEN:-a2a-lab-callback-secret}
+      PUSH_OBSERVER_TOKEN: ${PUSH_OBSERVER_TOKEN:-a2a-lab-observer-secret}
+    networks: [a2a-lab]
+    ports:
+      - "127.0.0.1:${PUSH_RECEIVER_PORT:-8100}:8100"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/healthz', timeout=2)",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
 
   agentgateway:
     image: cr.agentgateway.dev/agentgateway@sha256:bf2f339ef326d32def2aaeb44b1b4549801293c19b89e764a4228667d97d9896
