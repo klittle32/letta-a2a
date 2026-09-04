@@ -61,6 +61,7 @@ Follow the numbered learning path in [`examples/`](examples/README.md). The read
 - `03` — [Context continuation](examples/03-context-continuation/)
 - `04` — [Letta delegating to an external A2A agent](examples/04-letta-to-external-a2a-agent/)
 - `05` — [An external A2A agent delegating to Letta](examples/05-external-a2a-agent-to-letta/)
+- `06` — [Static Bearer authentication](examples/06-static-bearer-auth/)
 - `10` — [Failure and cancellation](examples/10-failure-and-cancellation/)
 
 Every example uses this shared Compose stack and the reusable client in `scripts/smoke-a2a.mjs`. Planned examples appear only in the index until their behavior and documentation are ready.
@@ -120,12 +121,12 @@ The reset command permanently deletes both local agents, all lab conversations, 
 - Text input and text artifacts are implemented first.
 - Streaming is not advertised yet; the bridge currently publishes one final text artifact per Letta turn.
 - Active task state uses each A2A SDK's in-memory task store. Letta conversation mappings survive bridge restarts, but historical `GetTask` records do not yet. The reference agent intentionally loses tasks and context memory on restart.
-- Push notifications, authenticated upstream Agent Cards, and production multi-tenant caller identity are deferred. Binary file transfer is deliberately out of scope for this reference repository.
+- Push notifications, signed Agent Cards, and production multi-tenant caller identity are deferred. Binary file transfer is deliberately out of scope for this reference repository.
 - Each conversation permits one active Letta turn. Concurrent messages to one A2A context are serialized.
 - Delegation is opt-in per turn: the request must explicitly mention `a2a_invoke`. Nested calls carry a hop count, and `MAX_A2A_HOPS=1` prevents accidental agent ping-pong loops. The caller-supplied hop metadata is a loop guard, not an authentication boundary.
 - Canceling an outer Letta task aborts active outbound A2A polling, sends a bounded best-effort `CancelTask` to an accepted remote child, and then aborts the local App Server turn. Tasks canceled while waiting on a conversation lock never start a Letta runtime.
 - Letta turns run in `unrestricted` permission mode because the headless App Server has no human approval channel. The per-turn allowlist is empty for ordinary calls and contains only the scoped, controller-owned `a2a_invoke` tool for explicit delegation requests.
-- The A2A listener enforces a fixed lab-only API key. That policy is not yet declared in the proxied backend Agent Cards; aligning advertised security is a later example.
+- The A2A listener enforces a fixed lab-only API key, and both proxied backend Agent Cards declare the matching HTTP Bearer requirement. The static key provides no per-caller identity or authorization policy.
 - Agentgateway emits useful A2A telemetry to structured stdout. Its UI log search returned no stored A2A rows during evaluation, so this lab does not treat the UI as an A2A audit store.
 - Default credentials are fixed lab-only values and both published ports bind to loopback. Do not reuse this Compose file unchanged for a shared or production environment.
 

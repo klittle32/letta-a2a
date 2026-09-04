@@ -37,7 +37,7 @@ The repository keeps only agentgateway. Evidence and limitations are recorded in
 | 03 | [`context-continuation`](03-context-continuation/) | Documented; manually verified | Reuse an opaque `contextId` to continue an interaction across tasks. |
 | 04 | [`letta-to-external-a2a-agent`](04-letta-to-external-a2a-agent/) | Documented; manually verified | Letta chooses `a2a_invoke`; the controller calls an independent A2A agent and returns its result. |
 | 05 | [`external-a2a-agent-to-letta`](05-external-a2a-agent-to-letta/) | Documented; manually verified | An independent A2A agent discovers and delegates work to Letta. |
-| 06 | `static-bearer-auth` | Gateway enforcement built; example pending | Advertise the gateway policy in Agent Cards and demonstrate missing, incorrect, and valid credentials. |
+| 06 | [`static-bearer-auth`](06-static-bearer-auth/) | Documented; manually verified | Advertise the gateway policy in Agent Cards and demonstrate missing, incorrect, and valid credentials. |
 | 07 | `oauth-client-credentials` | Planned | Obtain a short-lived OAuth 2.0 access token and use it for agent-to-agent calls. |
 | 08 | `authorization-policy` | Planned | Permit or deny A2A operations based on authenticated caller identity and scopes. |
 | 09 | `streaming` | Planned | Translate safe Letta App Server WebSocket events into A2A Server-Sent Events. |
@@ -75,7 +75,7 @@ Give the external reference agent one narrow outbound delegation path. It discov
 
 ### 06 — Static Bearer authentication
 
-Turn the current out-of-band lab key into a complete protocol example. Declare HTTP Bearer authentication in the Agent Card and demonstrate three requests: missing token, incorrect token, and valid token. Missing or invalid credentials must receive `401`; credentials must never appear in logs.
+The shared lab key is now a complete protocol example. Both Agent Cards declare HTTP Bearer authentication, and the gateway demonstrates three requests: missing token, incorrect token, and valid token. Missing or invalid credentials receive `401`; tested credential values do not appear in service logs.
 
 ### 07 — OAuth client credentials
 

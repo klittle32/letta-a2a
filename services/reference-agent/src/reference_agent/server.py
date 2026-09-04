@@ -6,18 +6,23 @@ import os
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
-from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
+from a2a.server.routes import create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
     AgentInterface,
     AgentSkill,
+    HTTPAuthSecurityScheme,
     Part,
+    SecurityRequirement,
+    SecurityScheme,
+    StringList,
     Task,
     TaskState,
     TaskStatus,
 )
+from google.protobuf.json_format import MessageToDict
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -152,6 +157,20 @@ def build_agent_card(public_base_url: str) -> AgentCard:
             push_notifications=False,
             extended_agent_card=False,
         ),
+        security_schemes={
+            "a2aLabBearer": SecurityScheme(
+                http_auth_security_scheme=HTTPAuthSecurityScheme(
+                    description=(
+                        "Static lab-only Bearer key enforced by agentgateway."
+                    ),
+                    scheme="Bearer",
+                    bearer_format="opaque",
+                )
+            )
+        },
+        security_requirements=[
+            SecurityRequirement(schemes={"a2aLabBearer": StringList()})
+        ],
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain"],
         skills=[
@@ -191,6 +210,11 @@ def build_agent_card(public_base_url: str) -> AgentCard:
     )
 
 
+def serialize_agent_card(card: AgentCard) -> dict[str, object]:
+    """Serialize the 1.0 card without the SDK helper's legacy field injection."""
+    return MessageToDict(card)
+
+
 async def healthz(_request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
@@ -215,10 +239,18 @@ def create_app(
         task_store=InMemoryTaskStore(),
         agent_card=card,
     )
+
+    async def get_agent_card(_request: Request) -> JSONResponse:
+        return JSONResponse(serialize_agent_card(card))
+
     return Starlette(
         routes=[
             Route("/healthz", healthz, methods=["GET"]),
-            *create_agent_card_routes(card),
+            Route(
+                "/.well-known/agent-card.json",
+                get_agent_card,
+                methods=["GET"],
+            ),
             *create_jsonrpc_routes(
                 handler,
                 "/",

@@ -14,6 +14,7 @@ The lab has answered the architectural question. Do not add more protocol machin
 - Canceling an outer Letta task propagates to its accepted remote child task without releasing the same-conversation lock early or allowing conflicting terminal states.
 - Nested calls safely re-enter one agentgateway process, so target-specific gateway lanes are unnecessary.
 - Agentgateway preserves and rewrites the richer backend Agent Cards rather than replacing them with minimal config-defined cards.
+- The gateway-published cards advertise the static HTTP Bearer policy that agentgateway enforces; missing and incorrect credentials receive `401`, while tested credential values stay out of service logs.
 
 ## What it did not prove
 

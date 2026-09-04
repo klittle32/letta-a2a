@@ -1,5 +1,6 @@
 import {
   A2A_PROTOCOL_VERSION,
+  AgentCard as AgentCardMessage,
   type AgentCard,
 } from "@a2a-js/sdk";
 
@@ -138,8 +139,25 @@ export function createAgentCard(
       extensions: [],
       extendedAgentCard: false,
     },
-    securitySchemes: {},
-    securityRequirements: [],
+    securitySchemes: {
+      a2aLabBearer: {
+        scheme: {
+          $case: "httpAuthSecurityScheme",
+          value: {
+            description: "Static lab-only Bearer key enforced by agentgateway.",
+            scheme: "Bearer",
+            bearerFormat: "opaque",
+          },
+        },
+      },
+    },
+    securityRequirements: [
+      {
+        schemes: {
+          a2aLabBearer: { list: [] },
+        },
+      },
+    ],
     defaultInputModes: ["text/plain"],
     defaultOutputModes: ["text/plain"],
     skills: [
@@ -157,6 +175,10 @@ export function createAgentCard(
     documentationUrl: "",
     signatures: [],
   };
+}
+
+export function serializeAgentCard(card: AgentCard): unknown {
+  return AgentCardMessage.toJSON(card);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

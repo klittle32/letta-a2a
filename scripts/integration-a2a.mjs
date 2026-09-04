@@ -52,10 +52,12 @@ try {
   }
 
   await runChecks();
+  if (managed) assertLogsOmitCredentials();
 } catch (error) {
   failure = error;
   if (managed) {
-    compose(["logs", "--no-color", "--tail", "200"], false);
+    const captured = composeCapture(["logs", "--no-color", "--tail", "200"]);
+    if (captured.output) process.stderr.write(redactCredentials(captured.output));
   }
 } finally {
   if (managed) {
@@ -227,6 +229,18 @@ function assertGatewayCard(card, expectedName, target) {
     `${target} Agent Card lost its skills`,
   );
   assert(card.capabilities, `${target} Agent Card lost its capabilities`);
+  const bearer = card.securitySchemes?.a2aLabBearer?.httpAuthSecurityScheme;
+  assert(bearer?.scheme === "Bearer", `${target} Agent Card lost Bearer security`);
+  assert(
+    card.securityRequirements?.some(
+      (requirement) => requirement.schemes?.a2aLabBearer,
+    ),
+    `${target} Agent Card does not require the advertised Bearer scheme`,
+  );
+  assert(
+    !JSON.stringify(card).includes(apiKey),
+    `${target} Agent Card exposed the gateway credential`,
+  );
   const interfaceV1 = card.supportedInterfaces?.find(
     (item) => item.protocolVersion === "1.0",
   );
@@ -255,6 +269,13 @@ async function assertGatewayAuthentication() {
     wrong.status === 401,
     `incorrect gateway key returned ${wrong.status}, expected 401`,
   );
+  const valid = await fetch(cardUrl, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+  });
+  assert(
+    valid.status === 200,
+    `valid gateway key returned ${valid.status}, expected 200`,
+  );
   const rpcBody = JSON.stringify({
     jsonrpc: "2.0",
     id: randomUUID(),
@@ -282,7 +303,41 @@ async function assertGatewayAuthentication() {
     wrongRpc.status === 401,
     `incorrect gateway key on RPC returned ${wrongRpc.status}, expected 401`,
   );
-  passed("strict gateway-key authentication");
+  const validRpc = await fetch(rpcUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: rpcBody,
+  });
+  assert(
+    validRpc.status === 200,
+    `valid gateway key on RPC returned ${validRpc.status}, expected 200`,
+  );
+  const validRpcPayload = await validRpc.json();
+  assert(
+    validRpcPayload.error,
+    "valid authentication probe unexpectedly found a nonexistent task",
+  );
+  passed("missing, incorrect, and valid gateway authentication");
+}
+
+function assertLogsOmitCredentials() {
+  const captured = composeCapture([
+    "logs",
+    "--no-color",
+    "agentgateway",
+    "bridge",
+    "reference-agent",
+    "agent-a",
+    "agent-b",
+  ]);
+  assert(captured.status === 0, "could not inspect service logs for credentials");
+  for (const value of sensitiveValues()) {
+    assert(!captured.output.includes(value), "a credential appeared in service logs");
+  }
+  passed("service logs omit tested credentials");
 }
 
 async function waitForReferenceObservation(command, predicate) {
@@ -443,6 +498,34 @@ function compose(args, required = true) {
     throw new Error(`docker compose ${args.join(" ")} failed with ${result.status}`);
   }
   return result.status;
+}
+
+function composeCapture(args) {
+  const result = spawnSync(
+    "docker",
+    ["compose", "-p", project, ...args],
+    { cwd: process.cwd(), env: composeEnv, encoding: "utf8" },
+  );
+  return {
+    status: result.status,
+    output: `${result.stdout ?? ""}${result.stderr ?? ""}`,
+  };
+}
+
+function sensitiveValues() {
+  return [
+    apiKey,
+    "wrong-a2a-lab-key",
+    composeEnv.OPENAI_API_KEY,
+    composeEnv.LETTA_APP_SERVER_TOKEN ?? "a2a-lab-app-server-token",
+  ].filter((value) => typeof value === "string" && value.length >= 4);
+}
+
+function redactCredentials(text) {
+  return sensitiveValues().reduce(
+    (redacted, value) => redacted.split(value).join("<redacted>"),
+    text,
+  );
 }
 
 function passed(label) {

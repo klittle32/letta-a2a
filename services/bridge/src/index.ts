@@ -16,7 +16,7 @@ import { loadAgentDefinitions, loadGatewayUrls } from "./config.js";
 import { ContextStore } from "./context-store.js";
 import { LettaAgentExecutor } from "./executor.js";
 import { LettaRuntime } from "./letta-runtime.js";
-import { createAgentCard } from "./mapping.js";
+import { createAgentCard, serializeAgentCard } from "./mapping.js";
 
 const port = positiveInteger(process.env.PORT, 8080, "PORT");
 const turnTimeoutMs = positiveInteger(
@@ -82,7 +82,9 @@ for (const runtime of runtimes) {
   const router = express.Router();
   router.use(
     `/${AGENT_CARD_PATH}`,
-    agentCardHandler({ agentCardProvider: handler }),
+    agentCardHandler({
+      agentCardProvider: async () => serializeAgentCard(card) as typeof card,
+    }),
   );
   router.use(
     "/",

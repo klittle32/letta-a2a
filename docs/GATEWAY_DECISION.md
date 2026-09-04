@@ -49,7 +49,7 @@ One initial live run returned a model-generated typo in the requested exact toke
 - Agentgateway v1.5.0 is an A2A-aware HTTP proxy, not proof of complete A2A 1.0 conformance. It does not parse or enforce `A2A-Version` or validate every protocol schema.
 - Rewriting a signed A2A 1.0 Agent Card changes its interface URLs without re-signing it. Upstream issue [#2701](https://github.com/agentgateway/agentgateway/issues/2701) tracks the broader conformance gap.
 - The UI's log-search API returned zero stored A2A records during this evaluation even though stdout contained rich A2A telemetry. The lab therefore treats structured stdout as the observed A2A diagnostic surface and does not configure a database solely for the UI.
-- Gateway authentication is enforced, but the proxied backend cards do not yet declare that gateway policy in their A2A security fields. Aligning advertised security with enforcement remains example 06.
+- Gateway authentication and Agent Card advertisement are separate concerns. At evaluation time the proxied backend cards did not declare the enforced policy; [Example 06](../examples/06-static-bearer-auth/) now adds that declaration without changing gateway enforcement.
 - Streaming, push notifications, and signed-card behavior were not part of this decision.
 
 ## Decision rationale

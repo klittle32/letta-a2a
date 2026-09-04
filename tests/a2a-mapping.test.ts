@@ -5,6 +5,7 @@ import {
   extractA2AResponse,
   extractMessageText,
   extractLettaAssistantText,
+  serializeAgentCard,
 } from "../services/bridge/src/mapping.js";
 
 describe("A2A and Letta mapping", () => {
@@ -74,5 +75,31 @@ describe("A2A and Letta mapping", () => {
     expect(card.supportedInterfaces[0]?.protocolVersion).toBe("1.0");
     expect(card.supportedInterfaces[1]?.protocolVersion).toBe("0.3");
     expect(card.capabilities?.streaming).toBe(false);
+    expect(card.securitySchemes).toEqual({
+      a2aLabBearer: {
+        scheme: {
+          $case: "httpAuthSecurityScheme",
+          value: {
+            description: "Static lab-only Bearer key enforced by agentgateway.",
+            scheme: "Bearer",
+            bearerFormat: "opaque",
+          },
+        },
+      },
+    });
+    expect(card.securityRequirements).toEqual([
+      { schemes: { a2aLabBearer: { list: [] } } },
+    ]);
+    expect(serializeAgentCard(card)).toMatchObject({
+      securitySchemes: {
+        a2aLabBearer: {
+          httpAuthSecurityScheme: {
+            scheme: "Bearer",
+            bearerFormat: "opaque",
+          },
+        },
+      },
+      securityRequirements: [{ schemes: { a2aLabBearer: {} } }],
+    });
   });
 });
