@@ -19,12 +19,38 @@ const gatewayUiPort =
   process.env.A2A_INTEGRATION_GATEWAY_UI_PORT ??
   process.env.A2A_GATEWAY_UI_PORT ??
   (managed ? await findFreePort() : "4090");
-const apiKey = process.env.A2A_GATEWAY_KEY ?? "sk-a2a-lab-only";
+const oauthPort =
+  process.env.A2A_INTEGRATION_OAUTH_PORT ??
+  process.env.OAUTH_PORT ??
+  (managed ? await findFreePort() : "9000");
+const oauthTokenUrl = `http://127.0.0.1:${oauthPort}/token`;
+const oauthIssuer = `http://127.0.0.1:${oauthPort}`;
+const oauthClientId = process.env.OAUTH_CLIENT_ID ?? "a2a-lab-client";
+const oauthClientSecret =
+  process.env.OAUTH_CLIENT_SECRET ?? "a2a-lab-client-secret";
+const oauthScope = "a2a.invoke";
+const issuedTokens = new Set();
+const tokenProvider = createTokenProvider({
+  tokenUrl: oauthTokenUrl,
+  clientId: oauthClientId,
+  clientSecret: oauthClientSecret,
+  scope: oauthScope,
+  refreshSkewMs: 1_000,
+});
 const composeEnv = {
   ...process.env,
   A2A_GATEWAY_PORT: gatewayPort,
   A2A_GATEWAY_UI_PORT: gatewayUiPort,
-  A2A_GATEWAY_KEY: apiKey,
+  OAUTH_PORT: oauthPort,
+  OAUTH_CLIENT_ID: oauthClientId,
+  OAUTH_CLIENT_SECRET: oauthClientSecret,
+  ...(managed
+    ? {
+        OAUTH_ALLOWED_SCOPES: "a2a.invoke diagnostic",
+        OAUTH_STALE_CLIENT_SECRET: "stale-client-secret",
+      }
+    : {}),
+  OAUTH_TOKEN_TTL_SECONDS: managed ? "6" : process.env.OAUTH_TOKEN_TTL_SECONDS,
   ...(!liveLetta && !process.env.OPENAI_API_KEY
     ? { OPENAI_API_KEY: "sk-unused-reference-only" }
     : {}),
@@ -229,17 +255,32 @@ function assertGatewayCard(card, expectedName, target) {
     `${target} Agent Card lost its skills`,
   );
   assert(card.capabilities, `${target} Agent Card lost its capabilities`);
-  const bearer = card.securitySchemes?.a2aLabBearer?.httpAuthSecurityScheme;
-  assert(bearer?.scheme === "Bearer", `${target} Agent Card lost Bearer security`);
+  const oauth = card.securitySchemes?.a2aOAuth?.oauth2SecurityScheme;
+  const clientCredentials = oauth?.flows?.clientCredentials;
+  assert(clientCredentials, `${target} Agent Card lost OAuth client credentials`);
   assert(
-    card.securityRequirements?.some(
-      (requirement) => requirement.schemes?.a2aLabBearer,
-    ),
-    `${target} Agent Card does not require the advertised Bearer scheme`,
+    clientCredentials.tokenUrl === oauthTokenUrl,
+    `${target} Agent Card advertises the wrong token URL`,
   );
   assert(
-    !JSON.stringify(card).includes(apiKey),
-    `${target} Agent Card exposed the gateway credential`,
+    clientCredentials.scopes?.[oauthScope],
+    `${target} Agent Card lost the ${oauthScope} scope`,
+  );
+  assert(
+    oauth.oauth2MetadataUrl ===
+      `${oauthIssuer}/.well-known/oauth-authorization-server`,
+    `${target} Agent Card advertises the wrong OAuth metadata URL`,
+  );
+  assert(
+    card.securityRequirements?.some(
+      (requirement) =>
+        requirement.schemes?.a2aOAuth?.list?.includes(oauthScope),
+    ),
+    `${target} Agent Card does not require the advertised OAuth scope`,
+  );
+  assert(
+    !JSON.stringify(card).includes(oauthClientSecret),
+    `${target} Agent Card exposed the OAuth client secret`,
   );
   const interfaceV1 = card.supportedInterfaces?.find(
     (item) => item.protocolVersion === "1.0",
@@ -260,21 +301,81 @@ async function assertGatewayAuthentication() {
   const missing = await fetch(cardUrl);
   assert(
     missing.status === 401,
-    `missing gateway key returned ${missing.status}, expected 401`,
+    `missing access token returned ${missing.status}, expected 401`,
   );
   const wrong = await fetch(cardUrl, {
-    headers: { Authorization: "Bearer wrong-a2a-lab-key" },
+    headers: { Authorization: "Bearer not-a-jwt" },
   });
   assert(
     wrong.status === 401,
-    `incorrect gateway key returned ${wrong.status}, expected 401`,
+    `malformed access token returned ${wrong.status}, expected 401`,
   );
+  const accessToken = await tokenProvider.getAccessToken();
   const valid = await fetch(cardUrl, {
-    headers: { Authorization: `Bearer ${apiKey}` },
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
   assert(
     valid.status === 200,
-    `valid gateway key returned ${valid.status}, expected 200`,
+    `valid access token returned ${valid.status}, expected 200`,
+  );
+  const claims = decodeJwtClaims(accessToken);
+  assert(claims.iss === oauthIssuer, `unexpected token issuer: ${claims.iss}`);
+  assert(
+    claims.aud === "letta-a2a-gateway",
+    `unexpected token audience: ${claims.aud}`,
+  );
+  assert(claims.sub === oauthClientId, `unexpected token subject: ${claims.sub}`);
+  assert(claims.scope === oauthScope, `unexpected token scope: ${claims.scope}`);
+  assert(
+    Number(claims.exp) > Math.floor(Date.now() / 1_000),
+    "authorization server issued an already-expired token",
+  );
+
+  const tampered = tamperJwtSignature(accessToken);
+  const wrongSignature = await fetch(cardUrl, {
+    headers: { Authorization: `Bearer ${tampered}` },
+  });
+  assert(
+    wrongSignature.status === 401,
+    `wrong JWT signature returned ${wrongSignature.status}, expected 401`,
+  );
+
+  if (managed) {
+    const wrongScopeToken = await requestAccessToken({ scope: "diagnostic" });
+    const wrongScope = await fetch(cardUrl, {
+      headers: { Authorization: `Bearer ${wrongScopeToken}` },
+    });
+    assert(
+      wrongScope.status === 403,
+      `wrong OAuth scope returned ${wrongScope.status}, expected 403`,
+    );
+
+    const multiScopeToken = await requestAccessToken({
+      scope: "diagnostic a2a.invoke",
+    });
+    const multiScope = await fetch(cardUrl, {
+      headers: { Authorization: `Bearer ${multiScopeToken}` },
+    });
+    assert(
+      multiScope.status === 200,
+      `token containing the required scope returned ${multiScope.status}, expected 200`,
+    );
+  }
+
+  const invalidClient = await fetch(oauthTokenUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${oauthClientId}:wrong-secret`).toString("base64")}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      scope: oauthScope,
+    }),
+  });
+  assert(
+    invalidClient.status === 401,
+    `invalid OAuth client returned ${invalidClient.status}, expected 401`,
   );
   const rpcBody = JSON.stringify({
     jsonrpc: "2.0",
@@ -289,38 +390,59 @@ async function assertGatewayAuthentication() {
   });
   assert(
     missingRpc.status === 401,
-    `missing gateway key on RPC returned ${missingRpc.status}, expected 401`,
+    `missing access token on RPC returned ${missingRpc.status}, expected 401`,
   );
   const wrongRpc = await fetch(rpcUrl, {
     method: "POST",
     headers: {
-      Authorization: "Bearer wrong-a2a-lab-key",
+      Authorization: "Bearer not-a-jwt",
       "Content-Type": "application/json",
     },
     body: rpcBody,
   });
   assert(
     wrongRpc.status === 401,
-    `incorrect gateway key on RPC returned ${wrongRpc.status}, expected 401`,
+    `malformed access token on RPC returned ${wrongRpc.status}, expected 401`,
   );
   const validRpc = await fetch(rpcUrl, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
     },
     body: rpcBody,
   });
   assert(
     validRpc.status === 200,
-    `valid gateway key on RPC returned ${validRpc.status}, expected 200`,
+    `valid access token on RPC returned ${validRpc.status}, expected 200`,
   );
   const validRpcPayload = await validRpc.json();
   assert(
     validRpcPayload.error,
     "valid authentication probe unexpectedly found a nonexistent task",
   );
-  passed("missing, incorrect, and valid gateway authentication");
+  if (managed) {
+    const expiredToken = await requestAccessToken({
+      clientId: "stale-client",
+      clientSecret: "stale-client-secret",
+    });
+    assert(
+      Number(decodeJwtClaims(expiredToken).exp) < Math.floor(Date.now() / 1_000),
+      "stale-client token was not already expired",
+    );
+    const expired = await fetch(cardUrl, {
+      headers: { Authorization: `Bearer ${expiredToken}` },
+    });
+    assert(
+      expired.status === 401,
+      `expired access token returned ${expired.status}, expected 401`,
+    );
+  }
+  passed(
+    managed
+      ? "OAuth exchange plus missing, malformed, invalid, expired, and valid auth"
+      : "OAuth exchange plus missing, malformed, invalid, and valid auth",
+  );
 }
 
 function assertLogsOmitCredentials() {
@@ -374,17 +496,13 @@ async function waitForCard(client) {
 
 function createClient(baseUrl, target) {
   const endpoint = `${baseUrl}/a2a/${encodeURIComponent(target)}`;
-  const headers = {
-    Authorization: `Bearer ${apiKey}`,
-    "Content-Type": "application/json",
-    "A2A-Version": "1.0",
-  };
 
   return {
     async card() {
+      const accessToken = await tokenProvider.getAccessToken();
       const response = await fetch(
         `${endpoint}/.well-known/agent-card.json`,
-        { headers: { Authorization: `Bearer ${apiKey}` } },
+        { headers: { Authorization: `Bearer ${accessToken}` } },
       );
       const body = await response.text();
       if (!response.ok) throw new Error(`Agent Card failed (${response.status}): ${body}`);
@@ -392,9 +510,14 @@ function createClient(baseUrl, target) {
     },
 
     async rpc(method, params) {
+      const accessToken = await tokenProvider.getAccessToken();
       const response = await fetch(endpoint, {
         method: "POST",
-        headers,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "A2A-Version": "1.0",
+        },
         body: JSON.stringify({
           jsonrpc: "2.0",
           id: randomUUID(),
@@ -514,11 +637,93 @@ function composeCapture(args) {
 
 function sensitiveValues() {
   return [
-    apiKey,
-    "wrong-a2a-lab-key",
+    oauthClientSecret,
+    "wrong-secret",
+    "stale-client-secret",
+    ...issuedTokens,
     composeEnv.OPENAI_API_KEY,
     composeEnv.LETTA_APP_SERVER_TOKEN ?? "a2a-lab-app-server-token",
   ].filter((value) => typeof value === "string" && value.length >= 4);
+}
+
+function createTokenProvider({
+  tokenUrl,
+  clientId,
+  clientSecret,
+  scope,
+  refreshSkewMs,
+}) {
+  let cached;
+  let exchangeInFlight;
+  return {
+    async getAccessToken() {
+      if (cached && cached.expiresAt > Date.now() + refreshSkewMs) {
+        return cached.value;
+      }
+      if (!exchangeInFlight) {
+        exchangeInFlight = requestAccessToken({
+          tokenUrl,
+          clientId,
+          clientSecret,
+          scope,
+        }).then((value) => {
+          const claims = decodeJwtClaims(value);
+          cached = { value, expiresAt: Number(claims.exp) * 1_000 };
+          return value;
+        }).finally(() => {
+          exchangeInFlight = undefined;
+        });
+      }
+      return exchangeInFlight;
+    },
+  };
+}
+
+async function requestAccessToken({
+  tokenUrl = oauthTokenUrl,
+  clientId = oauthClientId,
+  clientSecret = oauthClientSecret,
+  scope = oauthScope,
+} = {}) {
+  const response = await fetch(tokenUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ grant_type: "client_credentials", scope }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  const body = await response.text();
+  let payload;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    if (!response.ok) {
+      throw new Error(`OAuth token exchange failed (${response.status})`);
+    }
+    throw new Error("OAuth token endpoint returned a non-JSON response");
+  }
+  if (!response.ok) {
+    const code = typeof payload.error === "string" ? `: ${payload.error}` : "";
+    throw new Error(`OAuth token exchange failed (${response.status})${code}`);
+  }
+  assert(typeof payload.access_token === "string", "OAuth response has no access token");
+  issuedTokens.add(payload.access_token);
+  return payload.access_token;
+}
+
+function decodeJwtClaims(token) {
+  const parts = token.split(".");
+  assert(parts.length === 3, "access token is not a compact JWT");
+  return JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+}
+
+function tamperJwtSignature(token) {
+  const parts = token.split(".");
+  const first = parts[2][0];
+  parts[2] = `${first === "A" ? "B" : "A"}${parts[2].slice(1)}`;
+  return parts.join(".");
 }
 
 function redactCredentials(text) {

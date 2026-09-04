@@ -24,11 +24,23 @@ docker compose up --build -d
 docker compose ps
 ```
 
+Exchange the default disposable client credentials once for these discovery requests:
+
+```bash
+export ACCESS_TOKEN="$(curl -fsS \
+  -u "${OAUTH_CLIENT_ID:-a2a-lab-client}:${OAUTH_CLIENT_SECRET:-a2a-lab-client-secret}" \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  --data-urlencode 'grant_type=client_credentials' \
+  --data-urlencode 'scope=a2a.invoke' \
+  http://127.0.0.1:9000/token \
+  | jq -r '.access_token')"
+```
+
 Fetch the Letta agent's card:
 
 ```bash
 curl -sS \
-  -H "Authorization: Bearer ${A2A_GATEWAY_KEY:-sk-a2a-lab-only}" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   http://127.0.0.1:4000/a2a/agent-a/.well-known/agent-card.json \
   | jq
 ```
@@ -37,7 +49,7 @@ Fetch the external agent's card:
 
 ```bash
 curl -sS \
-  -H "Authorization: Bearer ${A2A_GATEWAY_KEY:-sk-a2a-lab-only}" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   http://127.0.0.1:4000/a2a/reference-agent/.well-known/agent-card.json \
   | jq
 ```
@@ -61,5 +73,5 @@ Each backend constructs its own Agent Card. Agentgateway proxies that card and r
 ## Boundaries
 
 - The two card locations are configured rather than found through a dynamic registry.
-- Agentgateway strictly enforces the Bearer value in these commands, but the proxied backend cards do not yet declare that gateway policy as an A2A security scheme. Later examples align declarations and enforcement.
+- Agentgateway strictly validates the OAuth Bearer token in these commands. The proxied backend cards declare the matching client-credentials flow and required scope; Example 07 explains that security layer.
 - A2A 0.3 compatibility is also advertised for broader clients, but the tested client-facing target is A2A 1.0.

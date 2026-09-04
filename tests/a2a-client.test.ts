@@ -28,7 +28,9 @@ describe("A2A client transport", () => {
       },
       {
         gatewayUrl: "http://gateway:4000",
-        gatewayKey: "test-key",
+        tokenProvider: {
+          getAccessToken: async () => "oauth-access-token",
+        },
         pollIntervalMs: 0,
       },
       async (input, init) => {
@@ -70,7 +72,7 @@ describe("A2A client transport", () => {
 
     expect(captured[0]?.url).toBe("http://gateway:4000/a2a/agent-b");
     expect(captured[0]?.init?.headers).toEqual({
-      Authorization: "Bearer test-key",
+      Authorization: "Bearer oauth-access-token",
       "Content-Type": "application/json",
       "A2A-Version": "1.0",
     });
@@ -102,7 +104,9 @@ describe("A2A client transport", () => {
       { target: "reference-agent", message: "slow 30" },
       {
         gatewayUrl: "http://gateway:4000",
-        gatewayKey: "test-key",
+        tokenProvider: {
+          getAccessToken: async () => "oauth-access-token",
+        },
         pollIntervalMs: 60_000,
         cancelTimeoutMs: 1_000,
       },
@@ -157,7 +161,9 @@ describe("A2A client transport", () => {
       { target: "reference-agent", message: "slow 30" },
       {
         gatewayUrl: "http://gateway:4000",
-        gatewayKey: "test-key",
+        tokenProvider: {
+          getAccessToken: async () => "oauth-access-token",
+        },
         pollIntervalMs: 60_000,
         timeoutMs: 10,
         cancelTimeoutMs: 1_000,

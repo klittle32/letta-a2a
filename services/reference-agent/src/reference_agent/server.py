@@ -13,7 +13,9 @@ from a2a.types import (
     AgentCard,
     AgentInterface,
     AgentSkill,
-    HTTPAuthSecurityScheme,
+    ClientCredentialsOAuthFlow,
+    OAuth2SecurityScheme,
+    OAuthFlows,
     Part,
     SecurityRequirement,
     SecurityScheme,
@@ -29,7 +31,11 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from reference_agent.commands import CommandEngine, CommandKind, CommandResult
-from reference_agent.outbound import OfficialA2AClient, OutboundA2AClient
+from reference_agent.outbound import (
+    ClientCredentialsTokenProvider,
+    OfficialA2AClient,
+    OutboundA2AClient,
+)
 
 
 class ReferenceAgentExecutor(AgentExecutor):
@@ -133,8 +139,13 @@ class ReferenceAgentExecutor(AgentExecutor):
         )
 
 
-def build_agent_card(public_base_url: str) -> AgentCard:
+def build_agent_card(
+    public_base_url: str,
+    *,
+    oauth_public_base_url: str,
+) -> AgentCard:
     base_url = public_base_url.rstrip("/")
+    oauth_base_url = oauth_public_base_url.rstrip("/")
     invocation_url = f"{base_url}/"
     return AgentCard(
         name="Independent Reference Agent",
@@ -158,18 +169,29 @@ def build_agent_card(public_base_url: str) -> AgentCard:
             extended_agent_card=False,
         ),
         security_schemes={
-            "a2aLabBearer": SecurityScheme(
-                http_auth_security_scheme=HTTPAuthSecurityScheme(
+            "a2aOAuth": SecurityScheme(
+                oauth2_security_scheme=OAuth2SecurityScheme(
                     description=(
-                        "Static lab-only Bearer key enforced by agentgateway."
+                        "OAuth 2.0 client credentials enforced by agentgateway."
                     ),
-                    scheme="Bearer",
-                    bearer_format="opaque",
+                    flows=OAuthFlows(
+                        client_credentials=ClientCredentialsOAuthFlow(
+                            token_url=f"{oauth_base_url}/token",
+                            scopes={
+                                "a2a.invoke": (
+                                    "Invoke an A2A agent through the lab gateway."
+                                )
+                            },
+                        )
+                    ),
+                    oauth2_metadata_url=(
+                        f"{oauth_base_url}/.well-known/oauth-authorization-server"
+                    ),
                 )
             )
         },
         security_requirements=[
-            SecurityRequirement(schemes={"a2aLabBearer": StringList()})
+            SecurityRequirement(schemes={"a2aOAuth": StringList(list=["a2a.invoke"])})
         ],
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain"],
@@ -222,16 +244,32 @@ async def healthz(_request: Request) -> JSONResponse:
 def create_app(
     public_base_url: str,
     *,
+    oauth_public_base_url: str = "http://127.0.0.1:9000",
     outbound_client: OutboundA2AClient | None = None,
 ) -> Starlette:
-    card = build_agent_card(public_base_url)
+    card = build_agent_card(
+        public_base_url,
+        oauth_public_base_url=oauth_public_base_url,
+    )
     if outbound_client is None:
+        token_provider = ClientCredentialsTokenProvider(
+            token_url=os.environ.get(
+                "OAUTH_TOKEN_URL",
+                "http://auth-server:9000/token",
+            ),
+            client_id=os.environ.get("OAUTH_CLIENT_ID", "a2a-lab-client"),
+            client_secret=os.environ.get(
+                "OAUTH_CLIENT_SECRET",
+                "a2a-lab-client-secret",
+            ),
+            scope=os.environ.get("OAUTH_SCOPE", "a2a.invoke"),
+        )
         outbound_client = OfficialA2AClient(
             endpoint=os.environ.get(
                 "A2A_LETTA_URL",
                 "http://agentgateway:4000/a2a/agent-a",
             ),
-            api_key=os.environ.get("A2A_GATEWAY_KEY", "sk-a2a-lab-only"),
+            token_provider=token_provider,
             expected_agent_name="Agent A",
         )
     handler = DefaultRequestHandler(
@@ -260,4 +298,10 @@ def create_app(
     )
 
 
-app = create_app(os.environ.get("PUBLIC_BASE_URL", "http://reference-agent:8090"))
+app = create_app(
+    os.environ.get("PUBLIC_BASE_URL", "http://reference-agent:8090"),
+    oauth_public_base_url=os.environ.get(
+        "OAUTH_PUBLIC_BASE_URL",
+        "http://127.0.0.1:9000",
+    ),
+)

@@ -5,6 +5,7 @@ import {
   extractMessageText,
   type A2AInvocationResult,
 } from "./mapping.js";
+import type { AccessTokenProvider } from "./oauth-client.js";
 
 export interface InvokeA2AArgs {
   target: string;
@@ -15,7 +16,7 @@ export interface InvokeA2AArgs {
 
 export interface A2AClientConfig {
   gatewayUrl: string;
-  gatewayKey: string;
+  tokenProvider: AccessTokenProvider;
   pollIntervalMs?: number;
   timeoutMs?: number;
   cancelTimeoutMs?: number;
@@ -99,10 +100,11 @@ export async function invokeA2A(
     body: Record<string, unknown>,
     requestSignal: AbortSignal = combinedSignal,
   ): Promise<unknown> => {
+    const accessToken = await config.tokenProvider.getAccessToken(requestSignal);
     const response = await fetchImpl(endpoint, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${config.gatewayKey}`,
+        Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
         "A2A-Version": "1.0",
       },

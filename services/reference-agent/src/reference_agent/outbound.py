@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Iterable
+import base64
+import time
+from collections.abc import AsyncGenerator, Callable, Iterable
 from dataclasses import dataclass
 from typing import Protocol
+from urllib.parse import quote_plus
 from uuid import uuid4
 
 import httpx
@@ -44,6 +47,116 @@ class OutboundA2AClient(Protocol):
     async def invoke(self, message: str) -> RemoteTaskResult: ...
 
 
+class AccessTokenProvider(Protocol):
+    async def get_access_token(self) -> str: ...
+
+
+class ClientCredentialsTokenProvider:
+    def __init__(
+        self,
+        *,
+        token_url: str,
+        client_id: str,
+        client_secret: str,
+        scope: str,
+        refresh_skew_seconds: float = 5,
+        http_client_factory: Callable[..., httpx.AsyncClient] = httpx.AsyncClient,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if not token_url.startswith(("http://", "https://")):
+            raise ValueError("OAuth token URL must use HTTP(S)")
+        if not client_id or not client_secret or not scope:
+            raise ValueError("OAuth client ID, client secret, and scope are required")
+        self._token_url = token_url
+        self._client_id = client_id
+        self._client_secret = client_secret
+        self._scope = scope
+        self._refresh_skew_seconds = refresh_skew_seconds
+        self._http_client_factory = http_client_factory
+        self._clock = clock
+        self._cached_token: str | None = None
+        self._expires_at = 0.0
+        self._lock = asyncio.Lock()
+
+    async def get_access_token(self) -> str:
+        if self._cached_token and self._expires_at > (
+            self._clock() + self._refresh_skew_seconds
+        ):
+            return self._cached_token
+
+        async with self._lock:
+            if self._cached_token and self._expires_at > (
+                self._clock() + self._refresh_skew_seconds
+            ):
+                return self._cached_token
+            async with self._http_client_factory(timeout=httpx.Timeout(10)) as client:
+                response = await client.post(
+                    self._token_url,
+                    headers={
+                        "Authorization": (
+                            "Basic "
+                            + base64.b64encode(
+                                (
+                                    f"{quote_plus(self._client_id)}:"
+                                    f"{quote_plus(self._client_secret)}"
+                                ).encode()
+                            ).decode()
+                        )
+                    },
+                    data={
+                        "grant_type": "client_credentials",
+                        "scope": self._scope,
+                    },
+                )
+            try:
+                payload = response.json()
+            except ValueError as error:
+                if not response.is_success:
+                    raise RuntimeError(
+                        f"OAuth token exchange failed ({response.status_code})"
+                    ) from error
+                raise RuntimeError(
+                    "OAuth token endpoint returned a non-JSON response"
+                ) from error
+            if not response.is_success:
+                code = payload.get("error") if isinstance(payload, dict) else None
+                suffix = f": {code}" if isinstance(code, str) else ""
+                raise RuntimeError(
+                    f"OAuth token exchange failed ({response.status_code}){suffix}"
+                )
+            access_token = payload.get("access_token")
+            token_type = payload.get("token_type")
+            expires_in = payload.get("expires_in")
+            if (
+                not isinstance(access_token, str)
+                or not access_token
+                or not isinstance(token_type, str)
+                or token_type.lower() != "bearer"
+                or not isinstance(expires_in, (int, float))
+                or isinstance(expires_in, bool)
+                or expires_in <= 0
+            ):
+                raise RuntimeError(
+                    "OAuth token endpoint did not return a valid access_token, "
+                    "token_type, and expires_in"
+                )
+            self._cached_token = access_token
+            self._expires_at = self._clock() + expires_in
+            return access_token
+
+
+class OAuthBearerAuth(httpx.Auth):
+    def __init__(self, token_provider: AccessTokenProvider) -> None:
+        self._token_provider = token_provider
+
+    async def async_auth_flow(
+        self, request: httpx.Request
+    ) -> AsyncGenerator[httpx.Request, None]:
+        access_token = await self._token_provider.get_access_token()
+        request.headers["Authorization"] = f"Bearer {access_token}"
+        yield request
+
+
 class OfficialA2AClient:
     """Discover and invoke one remote agent with the official Python A2A SDK."""
 
@@ -51,7 +164,7 @@ class OfficialA2AClient:
         self,
         *,
         endpoint: str,
-        api_key: str,
+        token_provider: AccessTokenProvider,
         expected_agent_name: str,
         hop: int = 1,
         poll_interval_seconds: float = 0.1,
@@ -59,7 +172,7 @@ class OfficialA2AClient:
         http_client_factory: Callable[..., httpx.AsyncClient] = httpx.AsyncClient,
     ) -> None:
         self._endpoint = endpoint.rstrip("/")
-        self._api_key = api_key
+        self._token_provider = token_provider
         self._expected_agent_name = expected_agent_name
         self._hop = hop
         self._poll_interval_seconds = poll_interval_seconds
@@ -68,7 +181,7 @@ class OfficialA2AClient:
 
     async def invoke(self, message: str) -> RemoteTaskResult:
         http_client = self._http_client_factory(
-            headers={"Authorization": f"Bearer {self._api_key}"},
+            auth=OAuthBearerAuth(self._token_provider),
             timeout=httpx.Timeout(self._timeout_seconds),
         )
         try:

@@ -17,6 +17,7 @@ import { ContextStore } from "./context-store.js";
 import { LettaAgentExecutor } from "./executor.js";
 import { LettaRuntime } from "./letta-runtime.js";
 import { createAgentCard, serializeAgentCard } from "./mapping.js";
+import { ClientCredentialsTokenProvider } from "./oauth-client.js";
 
 const port = positiveInteger(process.env.PORT, 8080, "PORT");
 const turnTimeoutMs = positiveInteger(
@@ -46,7 +47,16 @@ const a2aGatewayUrls = loadGatewayUrls(
   process.env.A2A_GATEWAY_URLS,
   definitions,
 );
-const a2aGatewayKey = requiredEnvironment("A2A_GATEWAY_KEY");
+const oauthTokenProvider = new ClientCredentialsTokenProvider({
+  tokenUrl: requiredEnvironment("OAUTH_TOKEN_URL"),
+  clientId: requiredEnvironment("OAUTH_CLIENT_ID"),
+  clientSecret: requiredEnvironment("OAUTH_CLIENT_SECRET"),
+  scope: requiredEnvironment("OAUTH_SCOPE"),
+});
+const oauthPublicBaseUrl = requiredEnvironment("OAUTH_PUBLIC_BASE_URL").replace(
+  /\/$/,
+  "",
+);
 
 const runtimes = definitions.map(
   (definition) =>
@@ -56,7 +66,7 @@ const runtimes = definitions.map(
       model,
       turnTimeoutMs,
       a2aGatewayUrls,
-      a2aGatewayKey,
+      oauthTokenProvider,
       maximumA2AHops,
     ),
 );
@@ -73,7 +83,11 @@ for (const runtime of runtimes) {
   const definition = runtime.definition as typeof runtime.definition & {
     publicBaseUrl: string;
   };
-  const card = createAgentCard(definition);
+  const card = createAgentCard(definition, {
+    tokenUrl: `${oauthPublicBaseUrl}/token`,
+    metadataUrl: `${oauthPublicBaseUrl}/.well-known/oauth-authorization-server`,
+    requiredScope: "a2a.invoke",
+  });
   const handler = new DefaultRequestHandler(
     card,
     new InMemoryTaskStore(),

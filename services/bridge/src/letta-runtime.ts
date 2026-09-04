@@ -12,6 +12,7 @@ import {
   A2AInvocationCancelledError,
   invokeA2A,
 } from "./a2a-client.js";
+import type { AccessTokenProvider } from "./oauth-client.js";
 import { shouldExposeDelegationTool } from "./delegation-policy.js";
 
 interface ActiveTurn {
@@ -49,7 +50,7 @@ export class LettaRuntime {
     private readonly model: string,
     private readonly turnTimeoutMs: number,
     private readonly a2aGatewayUrls: GatewayUrls,
-    private readonly a2aGatewayKey: string,
+    private readonly a2aTokenProvider: AccessTokenProvider,
     private readonly maximumA2AHops: number,
   ) {}
 
@@ -99,7 +100,7 @@ export class LettaRuntime {
                 : undefined,
             hop: activeTurn.hop + 1,
           },
-          { gatewayUrl, gatewayKey: this.a2aGatewayKey },
+          { gatewayUrl, tokenProvider: this.a2aTokenProvider },
           fetch,
           activeTurn.abortController.signal,
         );

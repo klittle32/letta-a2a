@@ -81,4 +81,4 @@ This is controller code around the external agent, not behavior hidden in an LLM
 - Only text input and text artifacts are mapped.
 - Canceling or timing out the outer reference-agent call stops its local outbound client, and cancellation leaves the outer task stably canceled. Neither path yet sends `CancelTask` to an accepted Letta child. The existing nested-cancellation proof covers the opposite direction, where Letta is the outer task.
 - Any child state other than completed—including failed, canceled, rejected, input-required, or auth-required—becomes a failed outer task with the child state and available detail.
-- The gateway key is supplied out of band. [Example 06](../06-static-bearer-auth/) aligns that enforced authentication with the Agent Cards' advertised security declarations.
+- The reference agent obtains and refreshes its gateway access token through the OAuth client-credentials flow. [Example 07](../07-oauth-client-credentials/) isolates that security layer.

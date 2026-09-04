@@ -6,6 +6,12 @@ import {
 
 import type { AgentDefinition } from "./config.js";
 
+export interface OAuthCardConfig {
+  tokenUrl: string;
+  metadataUrl: string;
+  requiredScope: string;
+}
+
 interface TextPartLike {
   text?: unknown;
   content?: {
@@ -107,6 +113,7 @@ export function extractA2AResponse(payload: unknown): A2AInvocationResult {
 
 export function createAgentCard(
   definition: AgentDefinition & { publicBaseUrl: string },
+  oauth: OAuthCardConfig,
 ): AgentCard {
   const baseUrl = definition.publicBaseUrl.replace(/\/$/, "");
   const invocationUrl = `${baseUrl}/agents/${definition.key}/`;
@@ -140,13 +147,26 @@ export function createAgentCard(
       extendedAgentCard: false,
     },
     securitySchemes: {
-      a2aLabBearer: {
+      a2aOAuth: {
         scheme: {
-          $case: "httpAuthSecurityScheme",
+          $case: "oauth2SecurityScheme",
           value: {
-            description: "Static lab-only Bearer key enforced by agentgateway.",
-            scheme: "Bearer",
-            bearerFormat: "opaque",
+            description:
+              "OAuth 2.0 client credentials enforced by agentgateway.",
+            flows: {
+              flow: {
+                $case: "clientCredentials",
+                value: {
+                  tokenUrl: oauth.tokenUrl,
+                  refreshUrl: "",
+                  scopes: {
+                    [oauth.requiredScope]:
+                      "Invoke an A2A agent through the lab gateway.",
+                  },
+                },
+              },
+            },
+            oauth2MetadataUrl: oauth.metadataUrl,
           },
         },
       },
@@ -154,7 +174,7 @@ export function createAgentCard(
     securityRequirements: [
       {
         schemes: {
-          a2aLabBearer: { list: [] },
+          a2aOAuth: { list: [oauth.requiredScope] },
         },
       },
     ],

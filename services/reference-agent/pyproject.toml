@@ -5,6 +5,7 @@ description = "Deterministic non-Letta A2A interoperability fixture"
 requires-python = ">=3.13"
 dependencies = [
   "a2a-sdk[http-server]==1.1.2",
+  "cryptography==50.0.0",
   "uvicorn==0.35.0",
 ]
 

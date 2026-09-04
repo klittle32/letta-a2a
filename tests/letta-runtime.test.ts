@@ -18,7 +18,7 @@ describe("LettaRuntime cancellation", () => {
       "test-model",
       30_000,
       {},
-      "gateway-key",
+      { getAccessToken: async () => "oauth-access-token" },
       1,
     );
 
@@ -136,7 +136,7 @@ function createRuntime(): LettaRuntime {
     "test-model",
     30_000,
     {},
-    "gateway-key",
+    { getAccessToken: async () => "oauth-access-token" },
     1,
   );
 }

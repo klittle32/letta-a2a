@@ -9,7 +9,7 @@ The external reference agent happens to be written in Python, but the examples d
 - Use two agents per scenario. Multi-agent orchestration is a separate topic.
 - Keep every service Dockerized on one host so the repository remains easy to run.
 - Teach protocol behavior rather than product-specific tricks.
-- Add one capability at a time and keep earlier examples working.
+- Add one capability at a time. Keep earlier conceptual examples runnable against the current stack; when a security stage is intentionally superseded, retain its exact Git checkpoint.
 - Use deterministic protocol fixtures where possible; label model-backed demonstrations as live tests.
 - Include exact commands, expected output, and a way to observe each interaction.
 - Create an example subfolder only when its README and behavior are ready. Do not add empty placeholders.
@@ -24,7 +24,7 @@ The evaluation proved:
 - Asynchronous task creation and polling.
 - Letta-to-external-agent nested delegation without gateway re-entry deadlock.
 - Cancellation propagation and stable terminal states.
-- Strict gateway-key enforcement, preservation of the tested card fields, rewriting of the tested A2A 1.0 interface URL, a reachable UI, and richer structured A2A logs.
+- Strict edge authentication, preservation of the tested card fields, rewriting of the tested A2A 1.0 interface URL, a reachable UI, and richer structured A2A logs. The original gateway evaluation used a static key; the current stack uses the JWT policy proven in Example 07.
 
 The repository keeps only agentgateway. Evidence and limitations are recorded in [`docs/GATEWAY_DECISION.md`](../docs/GATEWAY_DECISION.md).
 
@@ -37,8 +37,8 @@ The repository keeps only agentgateway. Evidence and limitations are recorded in
 | 03 | [`context-continuation`](03-context-continuation/) | Documented; manually verified | Reuse an opaque `contextId` to continue an interaction across tasks. |
 | 04 | [`letta-to-external-a2a-agent`](04-letta-to-external-a2a-agent/) | Documented; manually verified | Letta chooses `a2a_invoke`; the controller calls an independent A2A agent and returns its result. |
 | 05 | [`external-a2a-agent-to-letta`](05-external-a2a-agent-to-letta/) | Documented; manually verified | An independent A2A agent discovers and delegates work to Letta. |
-| 06 | [`static-bearer-auth`](06-static-bearer-auth/) | Documented; manually verified | Advertise the gateway policy in Agent Cards and demonstrate missing, incorrect, and valid credentials. |
-| 07 | `oauth-client-credentials` | Planned | Obtain a short-lived OAuth 2.0 access token and use it for agent-to-agent calls. |
+| 06 | [`static-bearer-auth`](06-static-bearer-auth/) | Historical stage; verified at `a0219be` | Advertise the gateway policy in Agent Cards and demonstrate missing, incorrect, and valid credentials. |
+| 07 | [`oauth-client-credentials`](07-oauth-client-credentials/) | Documented; protocol and live suites verified | Obtain a short-lived OAuth 2.0 access token and use it for agent-to-agent calls. |
 | 08 | `authorization-policy` | Planned | Permit or deny A2A operations based on authenticated caller identity and scopes. |
 | 09 | `streaming` | Planned | Translate safe Letta App Server WebSocket events into A2A Server-Sent Events. |
 | 10 | [`failure-and-cancellation`](10-failure-and-cancellation/) | Documented; manually verified | Observe explicit failure and cancellation, including outer-to-child cancellation propagation. |
@@ -75,11 +75,11 @@ Give the external reference agent one narrow outbound delegation path. It discov
 
 ### 06 — Static Bearer authentication
 
-The shared lab key is now a complete protocol example. Both Agent Cards declare HTTP Bearer authentication, and the gateway demonstrates three requests: missing token, incorrect token, and valid token. Missing or invalid credentials receive `401`; tested credential values do not appear in service logs.
+At checkpoint `a0219be`, the shared lab key formed a complete protocol example. Both Agent Cards declared HTTP Bearer authentication, and the gateway demonstrated missing, incorrect, and valid credentials. Example 07 intentionally replaced that runtime policy; the Example 06 README explains how to run the frozen stage.
 
 ### 07 — OAuth client credentials
 
-Use a small local authorization server. The calling agent exchanges its client credentials for a short-lived access token, then sends that token as HTTP Bearer authentication. Validate issuer, audience, signature, expiry, and declared scopes. Keep browser login and end-user authorization flows out of this server-to-server example.
+The current stack uses a small local authorization server. Calling agents exchange client credentials for short-lived access tokens, cache them until near expiry, and send them as HTTP Bearer authentication. Agentgateway validates issuer, audience, signature, time claims, and subject, then requires the Agent Card's declared `a2a.invoke` scope. Browser login and end-user authorization flows remain out of this server-to-server example.
 
 ### 08 — Authorization policy
 

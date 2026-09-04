@@ -5,7 +5,12 @@ import { randomUUID } from "node:crypto";
 const target = process.argv[2] ?? "agent-a";
 const baseUrl =
   process.env.A2A_GATEWAY_URL ?? "http://127.0.0.1:4000";
-const apiKey = process.env.A2A_GATEWAY_KEY ?? "sk-a2a-lab-only";
+const oauthTokenUrl =
+  process.env.OAUTH_TOKEN_URL ?? "http://127.0.0.1:9000/token";
+const oauthClientId = process.env.OAUTH_CLIENT_ID ?? "a2a-lab-client";
+const oauthClientSecret =
+  process.env.OAUTH_CLIENT_SECRET ?? "a2a-lab-client-secret";
+let cachedToken;
 const prompt =
   process.argv.slice(3).join(" ") ||
   "Reply briefly with your agent name and confirm that A2A reached you.";
@@ -13,7 +18,7 @@ const contextId = process.env.A2A_CONTEXT_ID?.trim();
 
 const cardResponse = await fetch(
   `${baseUrl}/a2a/${encodeURIComponent(target)}/.well-known/agent-card.json`,
-  { headers: { Authorization: `Bearer ${apiKey}` } },
+  { headers: { Authorization: `Bearer ${await getAccessToken()}` } },
 );
 if (!cardResponse.ok) {
   throw new Error(`Agent Card request failed: ${cardResponse.status} ${await cardResponse.text()}`);
@@ -85,10 +90,11 @@ console.log(
 );
 
 async function sendRpc(body) {
+  const accessToken = await getAccessToken();
   const response = await fetch(`${baseUrl}/a2a/${encodeURIComponent(target)}`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
       "A2A-Version": "1.0",
     },
@@ -103,6 +109,54 @@ async function sendRpc(body) {
     throw new Error(`A2A error: ${JSON.stringify(parsed.error)}`);
   }
   return parsed;
+}
+
+async function getAccessToken() {
+  if (cachedToken && cachedToken.expiresAt > Date.now() + 5_000) {
+    return cachedToken.value;
+  }
+  const value = await requestAccessToken();
+  const claims = JSON.parse(
+    Buffer.from(value.split(".")[1], "base64url").toString("utf8"),
+  );
+  if (!Number.isFinite(Number(claims.exp))) {
+    throw new Error("OAuth access token has no numeric exp claim");
+  }
+  cachedToken = { value, expiresAt: Number(claims.exp) * 1_000 };
+  return value;
+}
+
+async function requestAccessToken() {
+  const response = await fetch(oauthTokenUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${Buffer.from(`${oauthClientId}:${oauthClientSecret}`).toString("base64")}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      scope: "a2a.invoke",
+    }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  const body = await response.text();
+  let payload;
+  try {
+    payload = JSON.parse(body);
+  } catch {
+    if (!response.ok) {
+      throw new Error(`OAuth token exchange failed: ${response.status}`);
+    }
+    throw new Error("OAuth token endpoint returned a non-JSON response");
+  }
+  if (!response.ok) {
+    const code = typeof payload.error === "string" ? `: ${payload.error}` : "";
+    throw new Error(`OAuth token exchange failed: ${response.status}${code}`);
+  }
+  if (typeof payload.access_token !== "string") {
+    throw new Error("OAuth token endpoint returned no access token");
+  }
+  return payload.access_token;
 }
 
 function isTerminal(state) {

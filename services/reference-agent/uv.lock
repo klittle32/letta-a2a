@@ -430,6 +430,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "a2a-sdk", extra = ["http-server"] },
+    { name = "cryptography" },
     { name = "uvicorn" },
 ]
 
@@ -442,6 +443,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "a2a-sdk", extras = ["http-server"], specifier = "==1.1.2" },
+    { name = "cryptography", specifier = "==50.0.0" },
     { name = "uvicorn", specifier = "==0.35.0" },
 ]
 

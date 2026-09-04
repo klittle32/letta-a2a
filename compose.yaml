@@ -33,6 +33,44 @@ x-letta-runtime: &letta-runtime
     start_period: 10s
 
 services:
+  auth-server:
+    build:
+      context: ./services/reference-agent
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command:
+      [
+        "uvicorn",
+        "reference_agent.auth_server:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "9000",
+      ]
+    environment:
+      OAUTH_ISSUER: http://127.0.0.1:${OAUTH_PORT:-9000}
+      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-a2a-lab-client}
+      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-a2a-lab-client-secret}
+      OAUTH_STALE_CLIENT_SECRET: ${OAUTH_STALE_CLIENT_SECRET:-}
+      OAUTH_AUDIENCE: letta-a2a-gateway
+      OAUTH_ALLOWED_SCOPES: ${OAUTH_ALLOWED_SCOPES:-a2a.invoke}
+      OAUTH_TOKEN_TTL_SECONDS: ${OAUTH_TOKEN_TTL_SECONDS:-60}
+    networks: [a2a-lab]
+    ports:
+      - "127.0.0.1:${OAUTH_PORT:-9000}:9000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9000/healthz', timeout=2)",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
   agent-a:
     <<: *letta-runtime
     hostname: agent-a
@@ -60,13 +98,19 @@ services:
       MAX_A2A_HOPS: ${MAX_A2A_HOPS:-1}
       LETTA_TEST_MODEL: ${LETTA_TEST_MODEL:-openai/gpt-4.1-nano}
       A2A_GATEWAY_URLS: '{"agent-a":"http://agentgateway:4000","agent-b":"http://agentgateway:4000","reference-agent":"http://agentgateway:4000"}'
-      A2A_GATEWAY_KEY: ${A2A_GATEWAY_KEY:-sk-a2a-lab-only}
+      OAUTH_TOKEN_URL: http://auth-server:9000/token
+      OAUTH_PUBLIC_BASE_URL: http://127.0.0.1:${OAUTH_PORT:-9000}
+      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-a2a-lab-client}
+      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-a2a-lab-client-secret}
+      OAUTH_SCOPE: a2a.invoke
       AGENT_DEFINITIONS: >-
         [{"key":"agent-a","displayName":"Agent A","appServerUrl":"ws://agent-a:4500","appServerToken":"${LETTA_APP_SERVER_TOKEN:-a2a-lab-app-server-token}"},{"key":"agent-b","displayName":"Agent B","appServerUrl":"ws://agent-b:4500","appServerToken":"${LETTA_APP_SERVER_TOKEN:-a2a-lab-app-server-token}"}]
     volumes:
       - bridge-state:/data
     networks: [a2a-lab]
     depends_on:
+      auth-server:
+        condition: service_healthy
       agent-a:
         condition: service_healthy
       agent-b:
@@ -92,7 +136,11 @@ services:
     environment:
       PUBLIC_BASE_URL: http://reference-agent:8090
       A2A_LETTA_URL: http://agentgateway:4000/a2a/agent-a
-      A2A_GATEWAY_KEY: ${A2A_GATEWAY_KEY:-sk-a2a-lab-only}
+      OAUTH_TOKEN_URL: http://auth-server:9000/token
+      OAUTH_PUBLIC_BASE_URL: http://127.0.0.1:${OAUTH_PORT:-9000}
+      OAUTH_CLIENT_ID: ${OAUTH_CLIENT_ID:-a2a-lab-client}
+      OAUTH_CLIENT_SECRET: ${OAUTH_CLIENT_SECRET:-a2a-lab-client-secret}
+      OAUTH_SCOPE: a2a.invoke
     networks: [a2a-lab]
     healthcheck:
       test:
@@ -106,19 +154,25 @@ services:
       timeout: 3s
       retries: 30
       start_period: 5s
+    depends_on:
+      auth-server:
+        condition: service_healthy
 
   agentgateway:
     image: cr.agentgateway.dev/agentgateway@sha256:bf2f339ef326d32def2aaeb44b1b4549801293c19b89e764a4228667d97d9896
     restart: unless-stopped
     command: ["-f", "/config.yaml"]
     environment:
-      A2A_GATEWAY_KEY: ${A2A_GATEWAY_KEY:-sk-a2a-lab-only}
+      OAUTH_ISSUER: http://127.0.0.1:${OAUTH_PORT:-9000}
     volumes:
       - ./agentgateway/config.yaml:/config.yaml:ro
     networks: [a2a-lab]
     ports:
       - "127.0.0.1:${A2A_GATEWAY_PORT:-4000}:4000"
       - "127.0.0.1:${A2A_GATEWAY_UI_PORT:-4090}:4090"
+    depends_on:
+      auth-server:
+        condition: service_healthy
 
 networks:
   a2a-lab:

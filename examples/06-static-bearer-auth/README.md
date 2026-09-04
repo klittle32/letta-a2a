@@ -6,6 +6,15 @@ An A2A Agent Card can tell clients which authentication scheme the published end
 
 This example uses one fixed, lab-only opaque key. It demonstrates protocol declaration and edge enforcement—not production identity or authorization.
 
+This is a frozen historical stage. Example 07 replaced the current stack's permanent gateway key with OAuth client credentials. To run the exact static-key implementation without changing your current checkout, create a detached worktree at its verified commit:
+
+```bash
+git worktree add /tmp/letta-a2a-example-06 a0219be
+cd /tmp/letta-a2a-example-06
+cp .env.example .env
+nvim .env
+```
+
 Executed verification is retained in [`docs/evidence/2026-09-03-example-06.md`](../../docs/evidence/2026-09-03-example-06.md).
 
 ## Message flow
@@ -118,4 +127,4 @@ The Agent Card contains only the scheme type and format hint. The actual credent
 - There are no scopes or authorization decisions. Example 08 is reserved for that distinction.
 - Key issuance, rotation, revocation, expiry, and secure storage are outside this lab example.
 - The backend services are private Compose-network implementation details. The declared policy describes their gateway-published endpoints, where enforcement occurs.
-- OAuth client credentials remain a separate Example 07 concern.
+- OAuth client credentials are implemented by the current [Example 07](../07-oauth-client-credentials/) stack; this checkpoint remains useful for comparing the permanent-key and short-lived-token designs.

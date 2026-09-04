@@ -7,10 +7,18 @@ config:
 gateways:
   a2a:
     port: 4000
-    apiKey:
+    jwtAuth:
       mode: strict
-      keys:
-        - key: "$A2A_GATEWAY_KEY"
+      preserveToken: false
+      issuer: "$OAUTH_ISSUER"
+      audiences: [letta-a2a-gateway]
+      jwks:
+        url: http://auth-server:9000/jwks
+      jwtValidationOptions:
+        requiredClaims: [exp, nbf, sub]
+    authorization:
+      rules:
+        - require: 'jwt.scope.split(" ").exists(grant, grant == "a2a.invoke")'
   ui:
     port: 4090
 

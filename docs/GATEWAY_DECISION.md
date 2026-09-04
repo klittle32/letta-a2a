@@ -58,6 +58,12 @@ Agentgateway keeps all proven behavior while reducing the topology from three ga
 
 The repository now keeps only agentgateway. The temporary comparison overlay and LiteLLM configuration were removed rather than maintained as parallel implementations.
 
+## Subsequent authentication evolution
+
+The gateway evaluation and Example 06 deliberately used one static API key. [Example 07](../examples/07-oauth-client-credentials/) later replaced that current runtime policy with strict JWT authentication backed by a local OAuth client-credentials fixture and JWKS. Agentgateway now validates issuer, audience, signature, and time claims and requires `a2a.invoke`; the original static-key checkpoint remains reproducible at commit `a0219be`.
+
+This does not change the gateway choice. It demonstrates that the same listener can move from a permanent shared secret to short-lived access tokens without changing A2A routing or task behavior.
+
 ## Re-run the protocol and live behavior
 
 ```bash
@@ -73,4 +79,5 @@ Both commands create an isolated Compose project with dynamic loopback ports and
 - [Official A2A proxy guide](https://agentgateway.dev/docs/standalone/latest/agent/a2a/)
 - [Docker installation](https://agentgateway.dev/docs/standalone/latest/setup/install/docker/)
 - [API-key authentication](https://agentgateway.dev/docs/standalone/latest/configuration/security/apikey-authn/)
+- [JWT authentication](https://agentgateway.dev/docs/standalone/latest/configuration/security/jwt-authn/)
 - [Access-log behavior](https://agentgateway.dev/docs/standalone/latest/observability/access-logs/view/)
