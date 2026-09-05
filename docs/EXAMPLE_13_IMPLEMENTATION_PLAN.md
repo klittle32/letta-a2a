@@ -2,7 +2,7 @@
 
 ## Status
 
-Delivered and verified on 2026-09-04. The acceptance criteria and historical design below are retained as the implementation record. See the [walkthrough](../examples/13-a2a-cli-skill/) and [evidence](evidence/2026-09-04-example-13.md). Example 14 remains planned.
+Delivered and verified on 2026-09-04. The acceptance criteria and historical design below are retained as the implementation record. See the [walkthrough](../examples/13-a2a-cli-skill/) and [evidence](evidence/2026-09-04-example-13.md).
 
 ## Goal
 

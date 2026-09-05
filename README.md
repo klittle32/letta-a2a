@@ -93,9 +93,8 @@ Follow the numbered learning path in [`examples/`](examples/README.md). The read
 - `11` — [Push notifications](examples/11-push-notifications/)
 - `12` — [Hermes TUI to Google ADK](examples/12-hermes-tui-to-google-adk/)
 - `13` — [Portable A2A CLI skill](examples/13-a2a-cli-skill/)
-- `14` — A2A to ACPX Claude ([planned](docs/EXAMPLE_14_IMPLEMENTATION_PLAN.md))
 
-Implemented examples are complete through Example 13. Examples 06–08 retain exact historical checkpoints because later stages intentionally replaced their security policy. Polling walkthroughs reuse `scripts/smoke-a2a.mjs`, streaming uses `curl -N` and the integration client's SSE parser, and Example 12 adds a separate profile-gated ADK/Hermes path. Example 14 remains a bounded plan; no empty example directory exists before its behavior is ready.
+Implemented examples are complete through Example 13. Examples 06–08 retain exact historical checkpoints because later stages intentionally replaced their security policy. Polling walkthroughs reuse `scripts/smoke-a2a.mjs`, streaming uses `curl -N` and the integration client's SSE parser, and Example 12 adds a separate profile-gated ADK/Hermes path.
 
 ## Development checks
 

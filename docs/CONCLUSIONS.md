@@ -35,7 +35,7 @@ The progressive, observable demonstrations now live in [`examples/`](../examples
 
 The implemented examples intentionally use Docker on one host. Multi-host deployment is a networking and operations concern rather than part of this focused protocol reference. Examples 06–08 preserve the static-key, shared-identity OAuth, and caller-authorization stages; Examples 09–11 complete the current stack with streaming, failure/cancellation, and authenticated push notifications.
 
-[Example 12](../examples/12-hermes-tui-to-google-adk/) proves a Dockerized Hermes interactive TUI can use its stock `a2a_call` tool through the OAuth-protected gateway. [Example 13](../examples/13-a2a-cli-skill/) is also delivered: Letta Code and Codex use the same portable skill package and pinned official Rust SDK CLI with separate OAuth identities to continue live ADK contexts. [Example 14](EXAMPLE_14_IMPLEMENTATION_PLAN.md), composing A2A with one persistent ACPX Claude session, remains planned. None is a reason to broaden the core lab into general orchestration infrastructure.
+[Example 12](../examples/12-hermes-tui-to-google-adk/) proves a Dockerized Hermes interactive TUI can use its stock `a2a_call` tool through the OAuth-protected gateway. [Example 13](../examples/13-a2a-cli-skill/) is also delivered: Letta Code and Codex use the same portable skill package and pinned official Rust SDK CLI with separate OAuth identities to continue live ADK contexts. Neither is a reason to broaden the core lab into general orchestration infrastructure.
 
 The earlier Letta-to-Letta proof remains available outside the primary two-implementation learning path:
 
