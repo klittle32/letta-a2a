@@ -59,10 +59,13 @@ services:
       OAUTH_OBSERVER_CLIENT_SECRET: ${OAUTH_OBSERVER_CLIENT_SECRET:-observer-client-secret}
       OAUTH_DENIED_CLIENT_ID: ${OAUTH_DENIED_CLIENT_ID:-denied-invoker-client}
       OAUTH_DENIED_CLIENT_SECRET: ${OAUTH_DENIED_CLIENT_SECRET:-denied-invoker-client-secret}
+      OAUTH_HERMES_CLIENT_ID: ${OAUTH_HERMES_CLIENT_ID:-hermes-client}
+      OAUTH_HERMES_CLIENT_SECRET: ${HERMES_OAUTH_CLIENT_SECRET:-}
+      OAUTH_HERMES_TOKEN_TTL_SECONDS: ${OAUTH_HERMES_TOKEN_TTL_SECONDS:-900}
       OAUTH_STALE_CLIENT_SECRET: ${OAUTH_STALE_CLIENT_SECRET:-}
       OAUTH_AUDIENCE: letta-a2a-gateway
       OAUTH_TOKEN_TTL_SECONDS: ${OAUTH_TOKEN_TTL_SECONDS:-60}
-    networks: [a2a-lab]
+    networks: [a2a-lab, a2a-clients]
     ports:
       - "127.0.0.1:${OAUTH_PORT:-9001}:9000"
     healthcheck:
@@ -173,6 +176,69 @@ services:
       webhook-receiver:
         condition: service_healthy
 
+  google-adk-agent:
+    profiles: [example-12, example-12-live]
+    build:
+      context: ./services/google-adk-agent
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      PUBLIC_BASE_URL: http://google-adk-agent:8000
+      OAUTH_PUBLIC_BASE_URL: http://127.0.0.1:${OAUTH_PORT:-9001}
+      ADK_MODEL_MODE: ${ADK_MODEL_MODE:-live}
+      ADK_MODEL: ${ADK_MODEL:-openai/gpt-4.1-nano}
+      OPENAI_API_KEY_FILE: /run/secrets/openai-api-key
+    volumes:
+      - ${OPENAI_API_KEY_SECRET_FILE:-./.openai-api-key}:/run/secrets/openai-api-key:ro
+    networks: [a2a-lab]
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+
+  hermes-tui:
+    profiles: [example-12-live]
+    image: docker.io/nousresearch/hermes-agent:v2026.8.31@sha256:64923faeae267792bf9bf87fe3b4c4869e35004e360c7df01730ad801b74d524
+    command: ["python3", "/opt/letta-a2a/launch-hermes-tui.py"]
+    stdin_open: true
+    tty: true
+    environment:
+      HERMES_MODEL: ${HERMES_MODEL:-gpt-5-mini}
+      HERMES_OPENAI_API_KEY_FILE: /run/secrets/openai-api-key
+      HERMES_OAUTH_CLIENT_ID: ${OAUTH_HERMES_CLIENT_ID:-hermes-client}
+      HERMES_OAUTH_CLIENT_SECRET_FILE: /run/secrets/hermes-oauth-client-secret
+      HERMES_OAUTH_TOKEN_URL: http://auth-server:9000/token
+      HERMES_A2A_GATEWAY_URL: http://agentgateway:4000/a2a/google-adk
+      HERMES_CONFIG_TEMPLATE: /opt/letta-a2a/hermes-config.yaml
+      HERMES_CONFIG_PATH: /opt/data/config.yaml
+    volumes:
+      - hermes-state:/opt/data
+      - ./services/hermes/config.yaml:/opt/letta-a2a/hermes-config.yaml:ro
+      - ./scripts/launch-hermes-tui.py:/opt/letta-a2a/launch-hermes-tui.py:ro
+      - ${OPENAI_API_KEY_SECRET_FILE:-./.openai-api-key}:/run/secrets/openai-api-key:ro
+    secrets: [hermes-oauth-client-secret]
+    networks: [a2a-clients]
+    depends_on:
+      auth-server:
+        condition: service_healthy
+      google-adk-agent:
+        condition: service_healthy
+      agentgateway:
+        condition: service_healthy
+
   webhook-receiver:
     build:
       context: ./services/reference-agent
@@ -214,7 +280,7 @@ services:
       OAUTH_ISSUER: http://127.0.0.1:${OAUTH_PORT:-9001}
     volumes:
       - ./agentgateway/config.yaml:/config.yaml:ro
-    networks: [a2a-lab]
+    networks: [a2a-lab, a2a-clients]
     ports:
       - "127.0.0.1:${A2A_GATEWAY_PORT:-4000}:4000"
       - "127.0.0.1:${A2A_GATEWAY_UI_PORT:-4090}:4090"
@@ -225,6 +291,8 @@ services:
 networks:
   a2a-lab:
     driver: bridge
+  a2a-clients:
+    driver: bridge
 
 volumes:
   agent-a-state:
@@ -232,3 +300,8 @@ volumes:
   agent-b-state:
   agent-b-workspace:
   bridge-state:
+  hermes-state:
+
+secrets:
+  hermes-oauth-client-secret:
+    environment: HERMES_OAUTH_CLIENT_SECRET

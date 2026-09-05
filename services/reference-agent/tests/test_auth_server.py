@@ -11,6 +11,7 @@ from reference_agent.auth_server import (
     AuthServerSettings,
     ClientRegistration,
     create_app,
+    settings_from_environment,
 )
 
 
@@ -192,6 +193,52 @@ def test_distinct_clients_receive_registered_identity_and_permissions() -> None:
             assert observer_cannot_escalate.json()["error"] == "invalid_scope"
 
     asyncio.run(exercise())
+
+
+def test_optional_hermes_client_has_agent_permissions_and_its_own_ttl(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OAUTH_HERMES_CLIENT_ID", "hermes-test-client")
+    monkeypatch.setenv("OAUTH_HERMES_CLIENT_SECRET", "private-hermes-secret")
+    monkeypatch.setenv("OAUTH_HERMES_TOKEN_TTL_SECONDS", "900")
+    settings = settings_from_environment()
+
+    registration = settings.clients["hermes-test-client"]
+    assert registration.role == "agent"
+    assert registration.scopes == frozenset({"a2a.discover", "a2a.invoke"})
+    assert registration.token_ttl_seconds == 900
+
+    async def exercise() -> None:
+        transport = httpx.ASGITransport(app=create_app(settings))
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://auth-server",
+        ) as client:
+            response = await client.post(
+                "/token",
+                auth=("hermes-test-client", "private-hermes-secret"),
+                data={
+                    "grant_type": "client_credentials",
+                    "scope": "a2a.discover a2a.invoke",
+                },
+            )
+        assert response.status_code == 200
+        payload = response.json()
+        claims = decode_jwt(payload["access_token"])[1]
+        assert payload["expires_in"] == 900
+        assert claims["exp"] - claims["iat"] == 900
+        assert claims["sub"] == "hermes-test-client"
+        assert claims["role"] == "agent"
+
+    asyncio.run(exercise())
+
+
+def test_hermes_client_is_not_registered_without_a_secret(monkeypatch) -> None:
+    monkeypatch.delenv("OAUTH_HERMES_CLIENT_SECRET", raising=False)
+
+    settings = settings_from_environment()
+
+    assert "hermes-client" not in settings.clients
 
 
 def decode_jwt(token: str) -> tuple[dict[str, object], dict[str, object], bytes]:

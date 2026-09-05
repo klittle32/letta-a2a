@@ -1,0 +1,24 @@
+_config_version: 39
+
+plugins:
+  enabled:
+    - a2a-platform
+
+model:
+  provider: openai-api
+  default: "${HERMES_MODEL}"
+
+platform_toolsets:
+  cli:
+    - hermes-cli
+    - a2a
+
+a2a_agents:
+  google-adk:
+    url: http://agentgateway:4000/a2a/google-adk
+    auth:
+      type: bearer
+      token: "${HERMES_A2A_ACCESS_TOKEN}"
+    timeout: 120
+    capabilities:
+      - conversation

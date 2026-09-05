@@ -6,6 +6,10 @@ Demonstrate a real person using a Dockerized [Hermes Agent](https://github.com/N
 
 This is a client-harness interoperability example, not another protocol feature. The logical participants remain Hermes and the ADK agent; `agentgateway` is policy and transport infrastructure.
 
+## Delivery status
+
+Implemented and verified on 2026-09-04. The delivered walkthrough is [`examples/12-hermes-tui-to-google-adk/`](../examples/12-hermes-tui-to-google-adk/), and executed evidence is retained in [`docs/evidence/2026-09-04-example-12.md`](evidence/2026-09-04-example-12.md). Final pins are Hermes `v2026.8.31` at OCI digest `sha256:64923faeae267792bf9bf87fe3b4c4869e35004e360c7df01730ad801b74d524`, Google ADK `2.8.0`, and A2A SDK `1.1.2`.
+
 ## Target flow
 
 ```text
@@ -30,8 +34,8 @@ Hermes is outbound-only in this example. Do not enable its inbound A2A listener;
 
 ## Acceptance criteria
 
-1. Hermes runs from `docker.io/nousresearch/hermes-agent` at an exact release and OCI digest that includes the three-layer CLI/TUI A2A tool-registration fix merged in [PR #86660](https://github.com/NousResearch/hermes-agent/pull/86660). The initial candidate is Hermes Agent `v0.21.0` / `v2026.8.31`; recheck the pin when implementation starts.
-2. The Hermes data directory is a dedicated volume, the container is attached to the existing `a2a-lab` network, and `hermes --tui` receives a real TTY.
+1. Hermes runs from `docker.io/nousresearch/hermes-agent` at an exact release and OCI digest that includes the three-layer CLI/TUI A2A tool-registration fix merged in [PR #86660](https://github.com/NousResearch/hermes-agent/pull/86660). The delivered pin is Hermes Agent `v0.21.0` / `v2026.8.31` at `sha256:64923faeae267792bf9bf87fe3b4c4869e35004e360c7df01730ad801b74d524`.
+2. The Hermes data directory is a dedicated volume, the container is attached only to `a2a-clients`, agentgateway spans that network and `a2a-lab`, and `hermes --tui` receives a real TTY.
 3. The `a2a` toolset is explicitly enabled for platform `cli`, a named `google-adk` peer is configured, and `/tools` in the TUI shows `a2a_call`.
 4. The remote service is built with pinned `google-adk[a2a]` and A2A Python SDK 1.x dependencies, wraps one `root_agent` with `to_a2a()`, and exposes text input/output only on the private Compose network. Its supplied A2A 1.0 Agent Card declares the existing OAuth2 client-credentials scheme and required scopes rather than advertising an unauthenticated backend.
 5. The only Hermes-to-ADK network path uses `http://agentgateway:4000/a2a/google-adk`; the ADK port is not published to the host. Every JSON-RPC interface advertised by the gateway-published card points back through that gateway route and contains no backend hostname, backend port, `localhost`, or `0.0.0.0`.

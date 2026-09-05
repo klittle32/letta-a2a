@@ -16,6 +16,10 @@ const TARGETS = {
     backend: "reference-agent:8090",
     prefix: "/",
   },
+  "google-adk": {
+    backend: "google-adk-agent:8000",
+    prefix: "/",
+  },
 } as const;
 
 describe("primary agentgateway topology", () => {
@@ -53,9 +57,11 @@ describe("primary agentgateway topology", () => {
     expect(config.gateways.ui.port).toBe(4090);
     expect(config.ui.gateways).toEqual(["ui"]);
 
-    expect(config.routes).toHaveLength(3);
+    expect(config.routes).toHaveLength(4);
     for (const [target, expected] of Object.entries(TARGETS)) {
-      const route = config.routes.find((candidate: any) => candidate.name === target);
+      const route = config.routes.find(
+        (candidate: any) => candidate.name === target,
+      );
       expect(route.gateways).toEqual(["a2a"]);
       expect(route.matches).toEqual([
         { path: { pathPrefix: `/a2a/${target}` } },
@@ -67,13 +73,13 @@ describe("primary agentgateway topology", () => {
   });
 
   test("uses agentgateway as the only gateway in the primary Compose path", () => {
-    const compose = Bun.YAML.parse(
-      readFileSync("compose.yaml", "utf8"),
-    ) as any;
+    const compose = Bun.YAML.parse(readFileSync("compose.yaml", "utf8")) as any;
     const service = compose.services.agentgateway;
 
     expect(compose["x-litellm-gateway"]).toBeUndefined();
-    expect(Object.keys(compose.services).filter((name) => name.includes("litellm"))).toEqual([]);
+    expect(
+      Object.keys(compose.services).filter((name) => name.includes("litellm")),
+    ).toEqual([]);
     expect(service.image).toBe(EXPECTED_IMAGE);
     expect(service.command).toEqual(["-f", "/config.yaml"]);
     expect(service.environment.OAUTH_ISSUER).toBe(
@@ -107,28 +113,30 @@ describe("primary agentgateway topology", () => {
     expect(compose.services["reference-agent"].environment.A2A_LETTA_URL).toBe(
       "http://agentgateway:4000/a2a/agent-a",
     );
-    expect(compose.services["reference-agent"].environment.OAUTH_TOKEN_URL).toBe(
-      "http://auth-server:9000/token",
-    );
+    expect(
+      compose.services["reference-agent"].environment.OAUTH_TOKEN_URL,
+    ).toBe("http://auth-server:9000/token");
     expect(compose.services.bridge.environment.OAUTH_CLIENT_ID).toBe(
       "${OAUTH_BRIDGE_CLIENT_ID:-bridge-client}",
     );
     expect(compose.services.bridge.environment.OAUTH_SCOPE).toBe(
       "a2a.discover a2a.invoke",
     );
-    expect(compose.services["reference-agent"].environment.OAUTH_CLIENT_ID).toBe(
-      "${OAUTH_REFERENCE_CLIENT_ID:-reference-agent-client}",
-    );
+    expect(
+      compose.services["reference-agent"].environment.OAUTH_CLIENT_ID,
+    ).toBe("${OAUTH_REFERENCE_CLIENT_ID:-reference-agent-client}");
     expect(compose.services["reference-agent"].environment.OAUTH_SCOPE).toBe(
       "a2a.discover a2a.invoke",
     );
-    expect(compose.services["reference-agent"].environment.A2A_GATEWAY_KEY).toBeUndefined();
+    expect(
+      compose.services["reference-agent"].environment.A2A_GATEWAY_KEY,
+    ).toBeUndefined();
     expect(compose.services.bridge.environment.PUSH_CALLBACK_URL).toBe(
       "http://webhook-receiver:8100/callbacks/a2a",
     );
-    expect(compose.services["reference-agent"].environment.PUSH_CALLBACK_URL).toBe(
-      "http://webhook-receiver:8100/callbacks/a2a",
-    );
+    expect(
+      compose.services["reference-agent"].environment.PUSH_CALLBACK_URL,
+    ).toBe("http://webhook-receiver:8100/callbacks/a2a");
     expect(compose.services.bridge.environment.PUSH_CALLBACK_TOKEN).toBe(
       "${PUSH_CALLBACK_TOKEN:-a2a-lab-callback-secret}",
     );
@@ -161,9 +169,7 @@ describe("primary agentgateway topology", () => {
       "--port",
       "9000",
     ]);
-    expect(authServer.ports).toEqual([
-      "127.0.0.1:${OAUTH_PORT:-9001}:9000",
-    ]);
+    expect(authServer.ports).toEqual(["127.0.0.1:${OAUTH_PORT:-9001}:9000"]);
     expect(authServer.environment.OAUTH_CLIENT_ID).toBe(
       "${OAUTH_CLIENT_ID:-operator-client}",
     );

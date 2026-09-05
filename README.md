@@ -1,8 +1,8 @@
 # Letta A2A Lab
 
-An isolated Agent2Agent Protocol playground containing two persistent local Letta agents, an independent deterministic Python A2A agent, a shared TypeScript A2A bridge, local OAuth and webhook fixtures, and one agentgateway proxy.
+An isolated Agent2Agent Protocol playground containing two persistent local Letta agents, independent Python A2A implementations, a shared TypeScript A2A bridge, local OAuth and webhook fixtures, one agentgateway proxy, and an optional Hermes client harness.
 
-All seven services run in Docker on one host. The deterministic protocol path is provider-free; live Letta turns additionally require the configured model provider.
+The seven-service core and two Example 12 services run in Docker on one host. The deterministic protocol paths are provider-free; live Letta, Hermes, and Google ADK turns additionally require the configured model provider.
 
 The completed proof and limits are summarized in [`docs/CONCLUSIONS.md`](docs/CONCLUSIONS.md). The numbered demonstrations and implementation roadmap live in [`examples/README.md`](examples/README.md).
 
@@ -14,7 +14,8 @@ client ──client credentials──▶ authorization server :9001
 
 client ──JWT──▶ agentgateway :4000 ──┬──▶ bridge ──App Server──▶ Agent A
                                ├──▶ bridge ──App Server──▶ Agent B
-                               └──A2A──▶ Python reference agent
+                               ├──A2A──▶ Python reference agent
+                               └──A2A──▶ Google ADK agent (Example 12 profile)
 
 Agent A ──a2a_invoke──▶ agentgateway ──A2A──▶ Agent B
 Agent B ──a2a_invoke──▶ agentgateway ──A2A──▶ Agent A
@@ -22,9 +23,11 @@ Agent A ──a2a_invoke──▶ agentgateway ──A2A──▶ Python referen
 Python reference agent ──official A2A client──▶ agentgateway ──A2A──▶ Agent A
 
 bridge / reference agent ──Bearer callback──▶ webhook receiver :8100
+
+operator ──TTY──▶ Hermes TUI ──built-in a2a_call + JWT──▶ agentgateway
 ```
 
-The seven services are:
+The seven core services are:
 
 - `agent-a`: Letta Code 0.30.25 App Server with a local backend.
 - `agent-b`: an independently persisted local Letta backend.
@@ -33,6 +36,11 @@ The seven services are:
 - `auth-server`: a local-only OAuth client-credentials fixture with short-lived RSA-signed JWTs, metadata, and JWKS endpoints.
 - `agentgateway`: one agentgateway v1.5.0 process, pinned by OCI digest, with path-based A2A routes, strict JWT authentication, caller-aware role/scope authorization, Agent Card rewriting, structured A2A logs, and a loopback UI.
 - `webhook-receiver`: a test-only authenticated callback ledger with an authenticated observation endpoint published only on host loopback.
+
+Example 12 adds two profile-gated services:
+
+- `google-adk-agent`: a minimal Google ADK 2.8.0 `to_a2a()` agent with one text skill, in-memory sessions, an OAuth-declaring A2A 1.0 card, provider-free fake model, and opt-in live LiteLLM model.
+- `hermes-tui`: the official Hermes Agent v0.21.0 image pinned by release and OCI digest, with the stock outbound A2A toolset, a dedicated state volume, short-lived OAuth launcher, and no inbound A2A listener.
 
 The shared gateway is deliberate. The unchanged core discovery, messaging, context, delegation, failure, and cancellation matrix proved that nested calls can safely re-enter one agentgateway process. This replaces the three-process lane workaround previously required by LiteLLM 1.97.0. See [`docs/GATEWAY_DECISION.md`](docs/GATEWAY_DECISION.md).
 
@@ -82,17 +90,18 @@ Follow the numbered learning path in [`examples/`](examples/README.md). The read
 - `09` — [Streaming](examples/09-streaming/)
 - `10` — [Failure and cancellation](examples/10-failure-and-cancellation/)
 - `11` — [Push notifications](examples/11-push-notifications/)
-- `12` — Hermes TUI to Google ADK ([planned](docs/EXAMPLE_12_IMPLEMENTATION_PLAN.md))
+- `12` — [Hermes TUI to Google ADK](examples/12-hermes-tui-to-google-adk/)
 - `13` — Portable A2A CLI skill ([planned](docs/EXAMPLE_13_IMPLEMENTATION_PLAN.md))
 - `14` — A2A to ACPX Claude ([planned](docs/EXAMPLE_14_IMPLEMENTATION_PLAN.md))
 
-Implemented examples are complete through Example 11. The conceptual examples share the Compose topology; Examples 06–08 retain exact historical checkpoints because later stages intentionally replaced their security policy. Polling walkthroughs reuse `scripts/smoke-a2a.mjs`, while streaming uses `curl -N` and the integration client's SSE parser. Examples 12–14 are bounded plans for concrete cross-runtime use cases; no empty example directories exist before their behavior is ready.
+Implemented examples are complete through Example 12. Examples 06–08 retain exact historical checkpoints because later stages intentionally replaced their security policy. Polling walkthroughs reuse `scripts/smoke-a2a.mjs`, streaming uses `curl -N` and the integration client's SSE parser, and Example 12 adds a separate profile-gated ADK/Hermes path. Examples 13–14 remain bounded plans; no empty example directories exist before their behavior is ready.
 
 ## Development checks
 
 ```bash
 bun install --frozen-lockfile
 (cd services/reference-agent && uv sync --frozen)
+(cd services/google-adk-agent && uv sync --frozen)
 bun test
 bun run test:python
 bun run check
@@ -106,15 +115,19 @@ Run the deterministic protocol matrix without calling a model provider:
 
 ```bash
 bun run test:protocol
+bun run test:example-12
 ```
 
 Run the full live suite, including a provider-backed Letta tool-use turn:
 
 ```bash
 bun run test:integration
+bun run test:example-12:live
 ```
 
 Each invocation uses a unique Compose project and dynamically allocated loopback ports, then removes its containers and volumes. The protocol matrix first proves authentication and caller-aware authorization, then exercises Agent Card discovery, authenticated duplicate-safe reference-agent push delivery, ordered SSE chunks, stream failure, disconnect persistence, asynchronous `SendMessage`/`GetTask`, context continuation, terminal failure, and cancellation stability. The full suite adds the corresponding Letta push path, safe Letta assistant-text streaming, live delegation in both directions through separate bridge and reference-agent identities, and outer-to-child cancellation. It requires a working provider credential and remains subject to provider and model availability. The ordinary lab can remain running. Set `A2A_INTEGRATION_NO_MANAGE=1` to run the core assertions against an already-running lab on ports `4000`, `9001`, and `8100`; only the stale-token probe requires the managed integration fixture.
+
+The Example 12 provider-free check uses its real ADK/A2A containers with a fake model and a dedicated Hermes OAuth identity, but does not start Hermes. Its opt-in live check invokes the stock Hermes `a2a_call` tool twice against a live ADK model and verifies Hermes audit plus gateway/ADK correlation. The interactive TUI walkthrough remains under [`examples/12-hermes-tui-to-google-adk/`](examples/12-hermes-tui-to-google-adk/).
 
 ## Persistence and reset
 

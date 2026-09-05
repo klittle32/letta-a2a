@@ -32,24 +32,24 @@ Streaming was outside the original gateway-selection matrix. Example 09 subseque
 
 ## Progression
 
-| # | Example | State | Main concept |
-|---|---|---|---|
-| 01 | [`agent-discovery`](01-agent-discovery/) | Documented; manually verified | Discover agent identity, invocation URL, and protocol version through Agent Cards. |
-| 02 | [`basic-messaging`](02-basic-messaging/) | Documented; manually verified | Use one A2A client to call both the Letta and external implementations through the same protocol. |
-| 03 | [`context-continuation`](03-context-continuation/) | Documented; manually verified | Reuse an opaque `contextId` to continue an interaction across tasks. |
-| 04 | [`letta-to-external-a2a-agent`](04-letta-to-external-a2a-agent/) | Documented; manually verified | Letta chooses `a2a_invoke`; the controller calls an independent A2A agent and returns its result. |
-| 05 | [`external-a2a-agent-to-letta`](05-external-a2a-agent-to-letta/) | Documented; manually verified | An independent A2A agent discovers and delegates work to Letta. |
-| 06 | [`static-bearer-auth`](06-static-bearer-auth/) | Historical stage; verified at `a0219be` | Advertise the gateway policy in Agent Cards and demonstrate missing, incorrect, and valid credentials. |
-| 07 | [`oauth-client-credentials`](07-oauth-client-credentials/) | Historical stage; verified at `8122018` | Obtain a short-lived OAuth 2.0 access token and use it for agent-to-agent calls. |
-| 08 | [`authorization-policy`](08-authorization-policy/) | Historical stage; verified at `7bfd16b` | Permit or deny A2A operations based on authenticated caller identity and scopes. |
-| 09 | [`streaming`](09-streaming/) | Documented; protocol and live suites verified | Translate safe Letta App Server WebSocket events into A2A Server-Sent Events. |
-| 10 | [`failure-and-cancellation`](10-failure-and-cancellation/) | Documented; manually verified | Observe explicit failure and cancellation, including outer-to-child cancellation propagation. |
-| 11 | [`push-notifications`](11-push-notifications/) | Documented; protocol and live suites verified | Register an authenticated webhook, let the initiating request return, and receive asynchronous task updates. |
-| 12 | Hermes TUI to Google ADK | Planned; [implementation plan](../docs/EXAMPLE_12_IMPLEMENTATION_PLAN.md) | Use Hermes's built-in A2A tool from an interactive Docker TUI to continue a conversation with a Google ADK agent through agentgateway. |
-| 13 | Portable A2A CLI skill | Planned; [implementation plan](../docs/EXAMPLE_13_IMPLEMENTATION_PLAN.md) | Give supported shell-capable agent harnesses one portable skill backed by the standalone CLI from the official Rust SDK. |
-| 14 | A2A to ACPX Claude | Planned; [implementation plan](../docs/EXAMPLE_14_IMPLEMENTATION_PLAN.md) | Map an A2A context to one persistent ACPX Claude session and return its final assistant text. |
+| #   | Example                                                          | State                                                                     | Main concept                                                                                                                           |
+| --- | ---------------------------------------------------------------- | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| 01  | [`agent-discovery`](01-agent-discovery/)                         | Documented; manually verified                                             | Discover agent identity, invocation URL, and protocol version through Agent Cards.                                                     |
+| 02  | [`basic-messaging`](02-basic-messaging/)                         | Documented; manually verified                                             | Use one A2A client to call both the Letta and external implementations through the same protocol.                                      |
+| 03  | [`context-continuation`](03-context-continuation/)               | Documented; manually verified                                             | Reuse an opaque `contextId` to continue an interaction across tasks.                                                                   |
+| 04  | [`letta-to-external-a2a-agent`](04-letta-to-external-a2a-agent/) | Documented; manually verified                                             | Letta chooses `a2a_invoke`; the controller calls an independent A2A agent and returns its result.                                      |
+| 05  | [`external-a2a-agent-to-letta`](05-external-a2a-agent-to-letta/) | Documented; manually verified                                             | An independent A2A agent discovers and delegates work to Letta.                                                                        |
+| 06  | [`static-bearer-auth`](06-static-bearer-auth/)                   | Historical stage; verified at `a0219be`                                   | Advertise the gateway policy in Agent Cards and demonstrate missing, incorrect, and valid credentials.                                 |
+| 07  | [`oauth-client-credentials`](07-oauth-client-credentials/)       | Historical stage; verified at `8122018`                                   | Obtain a short-lived OAuth 2.0 access token and use it for agent-to-agent calls.                                                       |
+| 08  | [`authorization-policy`](08-authorization-policy/)               | Historical stage; verified at `7bfd16b`                                   | Permit or deny A2A operations based on authenticated caller identity and scopes.                                                       |
+| 09  | [`streaming`](09-streaming/)                                     | Documented; protocol and live suites verified                             | Translate safe Letta App Server WebSocket events into A2A Server-Sent Events.                                                          |
+| 10  | [`failure-and-cancellation`](10-failure-and-cancellation/)       | Documented; manually verified                                             | Observe explicit failure and cancellation, including outer-to-child cancellation propagation.                                          |
+| 11  | [`push-notifications`](11-push-notifications/)                   | Documented; protocol and live suites verified                             | Register an authenticated webhook, let the initiating request return, and receive asynchronous task updates.                           |
+| 12  | [`hermes-tui-to-google-adk`](12-hermes-tui-to-google-adk/)       | Documented; provider-free and live paths verified                         | Use Hermes's built-in A2A tool from an interactive Docker TUI to continue a conversation with a Google ADK agent through agentgateway. |
+| 13  | Portable A2A CLI skill                                           | Planned; [implementation plan](../docs/EXAMPLE_13_IMPLEMENTATION_PLAN.md) | Give supported shell-capable agent harnesses one portable skill backed by the standalone CLI from the official Rust SDK.               |
+| 14  | A2A to ACPX Claude                                               | Planned; [implementation plan](../docs/EXAMPLE_14_IMPLEMENTATION_PLAN.md) | Map an A2A context to one persistent ACPX Claude session and return its final assistant text.                                          |
 
-Implementation order is explicit: deliver Example 12 first, reuse its Google ADK service for the harness-portable Example 13, then proceed to the ACPX composition in Example 14.
+Example 12 is delivered. Its Google ADK service and gateway route are the implementation base for the harness-portable Example 13; the ACPX composition remains Example 14.
 
 ## Scenario details
 
@@ -106,7 +106,7 @@ Register an authenticated webhook for a long-running task, let the initiating re
 
 ### 12 — Hermes TUI to Google ADK
 
-Run the official Hermes Agent TUI interactively inside Docker and enable its built-in `a2a_call` tool for CLI sessions. Hermes calls one Google ADK agent through the existing JWT-protected `agentgateway`, then reuses the returned context ID for a second turn. The example keeps Hermes outbound-only, ADK in memory, and both model-backed paths explicitly live. See the [implementation plan](../docs/EXAMPLE_12_IMPLEMENTATION_PLAN.md).
+Run the official Hermes Agent TUI interactively inside Docker and enable its built-in `a2a_call` tool for CLI sessions. Hermes calls one Google ADK agent through the existing JWT-protected `agentgateway`, then reuses the returned context ID for a second turn. The example keeps Hermes outbound-only, ADK in memory, and both model-backed paths explicitly live. Follow the [walkthrough](12-hermes-tui-to-google-adk/) or inspect the [implementation plan](../docs/EXAMPLE_12_IMPLEMENTATION_PLAN.md).
 
 ### 13 — Portable A2A CLI skill
 

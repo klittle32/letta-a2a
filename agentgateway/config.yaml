@@ -63,5 +63,18 @@ routes:
     backends:
       - host: reference-agent:8090
 
+  - name: google-adk
+    gateways: [a2a]
+    matches:
+      - path:
+          pathPrefix: /a2a/google-adk
+    policies:
+      a2a: {}
+      urlRewrite:
+        path:
+          prefix: /
+    backends:
+      - host: google-adk-agent:8000
+
 ui:
   gateways: [ui]

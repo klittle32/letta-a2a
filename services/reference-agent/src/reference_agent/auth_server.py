@@ -24,6 +24,7 @@ class ClientRegistration:
     scopes: frozenset[str]
     role: str
     clock_offset_seconds: int = 0
+    token_ttl_seconds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,10 @@ def create_app(settings: AuthServerSettings | None = None) -> Starlette:
         or not registration.audience
         or not registration.scopes
         or not registration.role
+        or (
+            registration.token_ttl_seconds is not None
+            and registration.token_ttl_seconds <= 0
+        )
         for registration in settings.clients.values()
     ):
         raise ValueError("OAuth client registrations must be complete")
@@ -143,6 +148,7 @@ def create_app(settings: AuthServerSettings | None = None) -> Starlette:
             return oauth_error("invalid_scope", "the requested scope is not allowed")
         canonical_scope = " ".join(sorted(requested_scopes))
         issued_at = int(time.time()) + registration.clock_offset_seconds
+        token_ttl_seconds = registration.token_ttl_seconds or settings.token_ttl_seconds
         claims = {
             "iss": issuer,
             "aud": registration.audience,
@@ -153,14 +159,14 @@ def create_app(settings: AuthServerSettings | None = None) -> Starlette:
             "scope": canonical_scope,
             "iat": issued_at,
             "nbf": issued_at,
-            "exp": issued_at + settings.token_ttl_seconds,
+            "exp": issued_at + token_ttl_seconds,
             "jti": str(uuid4()),
         }
         return no_store_json(
             {
                 "access_token": signing_key.sign(claims),
                 "token_type": "Bearer",
-                "expires_in": settings.token_ttl_seconds,
+                "expires_in": token_ttl_seconds,
                 "scope": canonical_scope,
             }
         )
@@ -251,6 +257,23 @@ def settings_from_environment() -> AuthServerSettings:
             scopes=full_access,
             role="operator",
             clock_offset_seconds=-300,
+        )
+    hermes_client_secret = os.environ.get("OAUTH_HERMES_CLIENT_SECRET", "")
+    if hermes_client_secret:
+        hermes_client_id = os.environ.get(
+            "OAUTH_HERMES_CLIENT_ID",
+            "hermes-client",
+        )
+        if hermes_client_id in clients:
+            raise ValueError(f"duplicate OAuth client ID: {hermes_client_id}")
+        clients[hermes_client_id] = ClientRegistration(
+            secret=hermes_client_secret,
+            audience=audience,
+            scopes=full_access,
+            role="agent",
+            token_ttl_seconds=int(
+                os.environ.get("OAUTH_HERMES_TOKEN_TTL_SECONDS", "900")
+            ),
         )
     return AuthServerSettings(
         issuer=os.environ.get("OAUTH_ISSUER", "http://127.0.0.1:9000"),

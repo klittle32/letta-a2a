@@ -1,4 +1,5 @@
 .env
+.openai-api-key
 .letta/
 .DS_Store
 node_modules

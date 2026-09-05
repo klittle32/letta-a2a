@@ -9,7 +9,9 @@
     "integration": "node scripts/integration-a2a.mjs",
     "smoke": "node scripts/smoke-a2a.mjs",
     "test": "bun test",
-    "test:python": "cd services/reference-agent && uv run pytest",
+    "test:python": "(cd services/reference-agent && uv run pytest) && (cd services/google-adk-agent && uv run pytest)",
+    "test:example-12": "node scripts/integration-example-12.mjs",
+    "test:example-12:live": "node scripts/live-example-12.mjs",
     "test:protocol": "node scripts/integration-a2a.mjs --protocol-only",
     "test:integration": "node scripts/integration-a2a.mjs",
     "test:compose": "OPENAI_API_KEY=sk-compose-validation docker compose config --quiet"
