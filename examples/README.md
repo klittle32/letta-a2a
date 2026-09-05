@@ -46,10 +46,10 @@ Streaming was outside the original gateway-selection matrix. Example 09 subseque
 | 10  | [`failure-and-cancellation`](10-failure-and-cancellation/)       | Documented; manually verified                                             | Observe explicit failure and cancellation, including outer-to-child cancellation propagation.                                          |
 | 11  | [`push-notifications`](11-push-notifications/)                   | Documented; protocol and live suites verified                             | Register an authenticated webhook, let the initiating request return, and receive asynchronous task updates.                           |
 | 12  | [`hermes-tui-to-google-adk`](12-hermes-tui-to-google-adk/)       | Documented; provider-free and live paths verified                         | Use Hermes's built-in A2A tool from an interactive Docker TUI to continue a conversation with a Google ADK agent through agentgateway. |
-| 13  | Portable A2A CLI skill                                           | Planned; [implementation plan](../docs/EXAMPLE_13_IMPLEMENTATION_PLAN.md) | Give supported shell-capable agent harnesses one portable skill backed by the standalone CLI from the official Rust SDK.               |
+| 13  | [`a2a-cli-skill`](13-a2a-cli-skill/)                             | Documented; provider-free and live paths verified                         | Give Letta Code and Codex one unchanged portable skill backed by the standalone CLI from the official Rust SDK.                        |
 | 14  | A2A to ACPX Claude                                               | Planned; [implementation plan](../docs/EXAMPLE_14_IMPLEMENTATION_PLAN.md) | Map an A2A context to one persistent ACPX Claude session and return its final assistant text.                                          |
 
-Example 12 is delivered. Its Google ADK service and gateway route are the implementation base for the harness-portable Example 13; the ACPX composition remains Example 14.
+Example 13 is delivered on Example 12's Google ADK service and gateway route. The ACPX composition remains planned as Example 14.
 
 ## Scenario details
 
@@ -110,7 +110,7 @@ Run the official Hermes Agent TUI interactively inside Docker and enable its bui
 
 ### 13 — Portable A2A CLI skill
 
-Install the official Rust SDK's client-only `a2acli` binary and one portable Agent Skill in Letta Code and Codex. Each harness uses its own OAuth identity to discover and invoke the same Google ADK agent from Example 12 through `agentgateway`, receives structured JSON with deterministic text selection, and continues one context without a native A2A integration. See the [implementation plan](../docs/EXAMPLE_13_IMPLEMENTATION_PLAN.md).
+Install the official Rust SDK's client-only `a2acli` binary and one portable Agent Skill in Letta Code and Codex. Each harness uses its own OAuth identity to discover and invoke the same Google ADK agent from Example 12 through `agentgateway`, receives structured JSON with deterministic text selection, and continues one context without a native A2A integration. Follow the [walkthrough](13-a2a-cli-skill/) or inspect the retained [implementation plan](../docs/EXAMPLE_13_IMPLEMENTATION_PLAN.md).
 
 ### 14 — A2A to ACPX Claude
 

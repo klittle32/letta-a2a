@@ -258,6 +258,27 @@ def settings_from_environment() -> AuthServerSettings:
             role="operator",
             clock_offset_seconds=-300,
         )
+
+    def register_optional_agent(
+        client_id_variable: str,
+        client_secret_variable: str,
+        *,
+        default_client_id: str,
+    ) -> None:
+        client_secret = os.environ.get(client_secret_variable, "")
+        if not client_secret:
+            return
+        client_id = os.environ.get(client_id_variable, default_client_id)
+        if client_id in clients:
+            raise ValueError(f"duplicate OAuth client ID: {client_id}")
+        clients[client_id] = ClientRegistration(
+            secret=client_secret,
+            audience=audience,
+            scopes=full_access,
+            role="agent",
+            token_ttl_seconds=900,
+        )
+
     hermes_client_secret = os.environ.get("OAUTH_HERMES_CLIENT_SECRET", "")
     if hermes_client_secret:
         hermes_client_id = os.environ.get(
@@ -275,6 +296,16 @@ def settings_from_environment() -> AuthServerSettings:
                 os.environ.get("OAUTH_HERMES_TOKEN_TTL_SECONDS", "900")
             ),
         )
+    register_optional_agent(
+        "OAUTH_LETTA_CODE_CLIENT_ID",
+        "OAUTH_LETTA_CODE_CLIENT_SECRET",
+        default_client_id="letta-code-client",
+    )
+    register_optional_agent(
+        "OAUTH_CODEX_CLIENT_ID",
+        "OAUTH_CODEX_CLIENT_SECRET",
+        default_client_id="codex-client",
+    )
     return AuthServerSettings(
         issuer=os.environ.get("OAUTH_ISSUER", "http://127.0.0.1:9000"),
         clients=clients,
