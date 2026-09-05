@@ -25,7 +25,7 @@ Python reference agent ──official A2A client──▶ agentgateway ──A2A
 bridge / reference agent ──Bearer callback──▶ webhook receiver :8100
 
 operator ──TTY──▶ Hermes TUI ──built-in a2a_call + JWT──▶ agentgateway
-Letta Code / Codex ──shared skill + pinned a2acli + distinct JWTs──▶ agentgateway
+shell-capable agent ──using-a2a-cli skill──▶ installed a2acli ──▶ agentgateway
 ```
 
 The seven core services are:
@@ -116,7 +116,6 @@ Run the deterministic protocol matrix without calling a model provider:
 ```bash
 bun run test:protocol
 bun run test:example-12
-bun run test:example-13
 ```
 
 Run the full live suite, including a provider-backed Letta tool-use turn:
@@ -124,12 +123,11 @@ Run the full live suite, including a provider-backed Letta tool-use turn:
 ```bash
 bun run test:integration
 bun run test:example-12:live
-bun run test:example-13:live
 ```
 
 Each invocation uses a unique Compose project and dynamically allocated loopback ports, then removes its containers and volumes. The protocol matrix first proves authentication and caller-aware authorization, then exercises Agent Card discovery, authenticated duplicate-safe reference-agent push delivery, ordered SSE chunks, stream failure, disconnect persistence, asynchronous `SendMessage`/`GetTask`, context continuation, terminal failure, and cancellation stability. The full suite adds the corresponding Letta push path, safe Letta assistant-text streaming, live delegation in both directions through separate bridge and reference-agent identities, and outer-to-child cancellation. It requires a working provider credential and remains subject to provider and model availability. The ordinary lab can remain running. Set `A2A_INTEGRATION_NO_MANAGE=1` to run the core assertions against an already-running lab on ports `4000`, `9001`, and `8100`; only the stale-token probe requires the managed integration fixture.
 
-The Example 13 provider-free check installs the real pinned Rust CLI and proves both distinct harness identities through the existing gateway and fake ADK model. Its opt-in live check drives the unchanged skill package from installed Letta Code and Codex. See [`examples/13-a2a-cli-skill/`](examples/13-a2a-cli-skill/).
+Example 13 is intentionally just installation instructions plus a small skill that teaches an agent to use the official `a2acli`. See [`examples/13-a2a-cli-skill/`](examples/13-a2a-cli-skill/).
 
 The Example 12 provider-free check uses its real ADK/A2A containers with a fake model and a dedicated Hermes OAuth identity, but does not start Hermes. Its opt-in live check invokes the stock Hermes `a2a_call` tool twice against a live ADK model and verifies Hermes audit plus gateway/ADK correlation. The interactive TUI walkthrough remains under [`examples/12-hermes-tui-to-google-adk/`](examples/12-hermes-tui-to-google-adk/).
 

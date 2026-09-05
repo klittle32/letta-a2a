@@ -17,7 +17,7 @@ The lab has answered the architectural question. Do not add more protocol machin
 - The gateway-published cards advertise an OAuth2 client-credentials flow and required scope. Calling agents exchange credentials, cache short-lived JWTs, and refresh near expiry.
 - Agentgateway verifies the local issuer, audience, RSA signature, expiry/not-before, subject, role, and scope. Discovery requires `a2a.discover`; invocation requires `a2a.invoke` plus an `operator` or `agent` role. Authentication failures receive `401`, while authenticated but unauthorized callers receive `403`.
 - Agentgateway preserves ordered A2A SSE streams. Both agent implementations publish task/status/artifact events; the Letta bridge exposes only top-level assistant text and persists the assembled artifact for later retrieval.
-- One unchanged portable Agent Skill, the pinned official Rust SDK `a2acli`, and a narrow OAuth launcher let installed Letta Code and Codex discover and continue contexts with the same ADK agent without native A2A integrations. Distinct subjects, secret files, tokens, caches, and contexts preserve harness attribution.
+- A shell-capable agent can use an ordinary Agent Skill that explains the official `a2acli` commands; no custom A2A client or harness integration is required.
 - Both agent implementations support the demonstrated A2A 1.0 push-notification lifecycle. Registrations are restricted to one configured callback and Bearer credential, delivery does not block task processing, the separately authenticated receiver handles identical deliveries idempotently, and a later `GetTask` remains authoritative.
 
 ## What it did not prove
@@ -35,7 +35,7 @@ The progressive, observable demonstrations now live in [`examples/`](../examples
 
 The implemented examples intentionally use Docker on one host. Multi-host deployment is a networking and operations concern rather than part of this focused protocol reference. Examples 06–08 preserve the static-key, shared-identity OAuth, and caller-authorization stages; Examples 09–11 complete the current stack with streaming, failure/cancellation, and authenticated push notifications.
 
-[Example 12](../examples/12-hermes-tui-to-google-adk/) proves a Dockerized Hermes interactive TUI can use its stock `a2a_call` tool through the OAuth-protected gateway. [Example 13](../examples/13-a2a-cli-skill/) is also delivered: Letta Code and Codex use the same portable skill package and pinned official Rust SDK CLI with separate OAuth identities to continue live ADK contexts. Neither is a reason to broaden the core lab into general orchestration infrastructure.
+[Example 12](../examples/12-hermes-tui-to-google-adk/) proves a Dockerized Hermes interactive TUI can use its stock `a2a_call` tool through the OAuth-protected gateway. [Example 13](../examples/13-a2a-cli-skill/) shows the simpler alternative for any shell-capable agent: install `a2acli` and provide a skill explaining its commands. Neither is a reason to broaden the core lab into general orchestration infrastructure.
 
 The earlier Letta-to-Letta proof remains available outside the primary two-implementation learning path:
 

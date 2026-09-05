@@ -103,7 +103,7 @@ The pinned Hermes client sends `SendMessage` and waits for that HTTP response. I
 
 These are intended seams, not permission to duplicate the primary Compose stack. Prefer one optional Compose profile and shared gateway/auth fixtures.
 
-Example 13 deliberately reuses this ADK service, Agent Card, and gateway route. Keep those seams generic enough for a second authenticated caller without adding Example 13 policy to the ADK agent itself.
+Example 13 reuses this ADK service, Agent Card, and gateway route as a target for the official `a2acli`; it adds no policy to the ADK agent itself.
 
 ## Test-first slices
 

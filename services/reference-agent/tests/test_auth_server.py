@@ -4,7 +4,6 @@ import json
 import time
 
 import httpx
-import pytest
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
@@ -240,45 +239,6 @@ def test_hermes_client_is_not_registered_without_a_secret(monkeypatch) -> None:
     settings = settings_from_environment()
 
     assert "hermes-client" not in settings.clients
-
-
-def test_optional_harness_clients_have_distinct_agent_identities(monkeypatch) -> None:
-    monkeypatch.setenv("OAUTH_LETTA_CODE_CLIENT_ID", "letta-code-test-client")
-    monkeypatch.setenv("OAUTH_LETTA_CODE_CLIENT_SECRET", "private-letta-code-secret")
-    monkeypatch.setenv("OAUTH_CODEX_CLIENT_ID", "codex-test-client")
-    monkeypatch.setenv("OAUTH_CODEX_CLIENT_SECRET", "private-codex-secret")
-
-    settings = settings_from_environment()
-
-    for client_id in ("letta-code-test-client", "codex-test-client"):
-        registration = settings.clients[client_id]
-        assert registration.role == "agent"
-        assert registration.scopes == frozenset({"a2a.discover", "a2a.invoke"})
-        assert registration.token_ttl_seconds == 900
-
-    assert settings.clients["letta-code-test-client"].secret != settings.clients[
-        "codex-test-client"
-    ].secret
-
-
-def test_harness_clients_are_secret_gated(monkeypatch) -> None:
-    monkeypatch.delenv("OAUTH_LETTA_CODE_CLIENT_SECRET", raising=False)
-    monkeypatch.delenv("OAUTH_CODEX_CLIENT_SECRET", raising=False)
-
-    settings = settings_from_environment()
-
-    assert "letta-code-client" not in settings.clients
-    assert "codex-client" not in settings.clients
-
-
-def test_harness_clients_refuse_duplicate_ids(monkeypatch) -> None:
-    monkeypatch.setenv("OAUTH_LETTA_CODE_CLIENT_ID", "shared-harness-client")
-    monkeypatch.setenv("OAUTH_LETTA_CODE_CLIENT_SECRET", "private-letta-code-secret")
-    monkeypatch.setenv("OAUTH_CODEX_CLIENT_ID", "shared-harness-client")
-    monkeypatch.setenv("OAUTH_CODEX_CLIENT_SECRET", "private-codex-secret")
-
-    with pytest.raises(ValueError, match="duplicate OAuth client ID: shared-harness-client"):
-        settings_from_environment()
 
 
 def decode_jwt(token: str) -> tuple[dict[str, object], dict[str, object], bytes]:
