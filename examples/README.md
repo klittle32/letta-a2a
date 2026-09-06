@@ -47,6 +47,7 @@ Streaming was outside the original gateway-selection matrix. Example 09 subseque
 | 11  | [`push-notifications`](11-push-notifications/)                   | Documented; protocol and live suites verified                             | Register an authenticated webhook, let the initiating request return, and receive asynchronous task updates.                           |
 | 12  | [`hermes-tui-to-google-adk`](12-hermes-tui-to-google-adk/)       | Documented; provider-free and live paths verified                         | Use Hermes's built-in A2A tool from an interactive Docker TUI to continue a conversation with a Google ADK agent through agentgateway. |
 | 13  | [`a2a-cli-skill`](13-a2a-cli-skill/)                             | Documented                                                                | Install the official CLI and give a shell-capable agent a skill that explains how to use it.                                           |
+| 14  | [`typescript-letta-agent-sdk`](14-typescript-letta-agent-sdk/)   | Documented; runnable locally                                               | Expose a persistent Letta agent through the official TypeScript A2A client/server and Letta Agent SDK.                                 |
 
 Example 13 is delivered on Example 12's Google ADK service and gateway route.
 
@@ -110,6 +111,10 @@ Run the official Hermes Agent TUI interactively inside Docker and enable its bui
 ### 13 — Portable A2A CLI skill
 
 Install the official `a2acli` for your operating system, then add one small Agent Skill that teaches a shell-capable agent the CLI commands for discovery, messaging, task polling, cancellation, and context continuation. Follow the [walkthrough](13-a2a-cli-skill/).
+
+### 14 — TypeScript A2A server to Letta Agent SDK
+
+Use the official `@a2a-js/sdk` for both the client and server, then implement the narrow `AgentExecutor` that runs a persistent Letta agent through `@letta-ai/letta-agent-sdk`. This standalone local example shows streaming text, context-to-conversation mapping, failure, and cancellation without Rust, Docker, a gateway, authentication, or v0.3 compatibility. Follow the [walkthrough](14-typescript-letta-agent-sdk/).
 
 ## Required README shape
 

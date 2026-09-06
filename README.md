@@ -93,8 +93,9 @@ Follow the numbered learning path in [`examples/`](examples/README.md). The read
 - `11` — [Push notifications](examples/11-push-notifications/)
 - `12` — [Hermes TUI to Google ADK](examples/12-hermes-tui-to-google-adk/)
 - `13` — [Portable A2A CLI skill](examples/13-a2a-cli-skill/)
+- `14` — [TypeScript A2A server to Letta Agent SDK](examples/14-typescript-letta-agent-sdk/)
 
-Implemented examples are complete through Example 13. Examples 06–08 retain exact historical checkpoints because later stages intentionally replaced their security policy. Polling walkthroughs reuse `scripts/smoke-a2a.mjs`, streaming uses `curl -N` and the integration client's SSE parser, and Example 12 adds a separate profile-gated ADK/Hermes path.
+Implemented examples are complete through Example 14. Examples 06–08 retain exact historical checkpoints because later stages intentionally replaced their security policy. Polling walkthroughs reuse `scripts/smoke-a2a.mjs`, streaming uses `curl -N` and the integration client's SSE parser, and Example 12 adds a separate profile-gated ADK/Hermes path. Example 14 is a standalone local TypeScript package and does not use the Docker lab.
 
 ## Development checks
 
@@ -128,6 +129,8 @@ bun run test:example-12:live
 Each invocation uses a unique Compose project and dynamically allocated loopback ports, then removes its containers and volumes. The protocol matrix first proves authentication and caller-aware authorization, then exercises Agent Card discovery, authenticated duplicate-safe reference-agent push delivery, ordered SSE chunks, stream failure, disconnect persistence, asynchronous `SendMessage`/`GetTask`, context continuation, terminal failure, and cancellation stability. The full suite adds the corresponding Letta push path, safe Letta assistant-text streaming, live delegation in both directions through separate bridge and reference-agent identities, and outer-to-child cancellation. It requires a working provider credential and remains subject to provider and model availability. The ordinary lab can remain running. Set `A2A_INTEGRATION_NO_MANAGE=1` to run the core assertions against an already-running lab on ports `4000`, `9001`, and `8100`; only the stale-token probe requires the managed integration fixture.
 
 Example 13 is intentionally just installation instructions plus a small skill that teaches an agent to use the official `a2acli`. See [`examples/13-a2a-cli-skill/`](examples/13-a2a-cli-skill/).
+
+Example 14 is an intentionally small TypeScript composition of the official A2A client/server and Letta Agent SDK. It demonstrates the `AgentExecutor` boundary directly without requiring Rust, Docker, agentgateway, OAuth, or A2A 0.3 compatibility. See [`examples/14-typescript-letta-agent-sdk/`](examples/14-typescript-letta-agent-sdk/).
 
 The Example 12 provider-free check uses its real ADK/A2A containers with a fake model and a dedicated Hermes OAuth identity, but does not start Hermes. Its opt-in live check invokes the stock Hermes `a2a_call` tool twice against a live ADK model and verifies Hermes audit plus gateway/ADK correlation. The interactive TUI walkthrough remains under [`examples/12-hermes-tui-to-google-adk/`](examples/12-hermes-tui-to-google-adk/).
 
