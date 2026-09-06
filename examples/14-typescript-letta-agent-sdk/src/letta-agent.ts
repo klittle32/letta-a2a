@@ -157,10 +157,12 @@ export async function resolveOrCreateAgent(
     return agent.id;
   }
 
-  const matches = await client.agents.list({
-    name: config.lettaAgentName,
-    limit: 2,
-  });
+  // The local App Server currently returns the full agent list even when the
+  // SDK request includes a name filter. Treat filtering as a client-side
+  // responsibility so unrelated local agents do not look like duplicates.
+  const matches = (await client.agents.list({ limit: 100 })).filter(
+    (agent) => agent.name === config.lettaAgentName,
+  );
   if (matches.length > 1) {
     throw new Error(
       `More than one Letta agent is named ${JSON.stringify(config.lettaAgentName)}; set A2A_LETTA_AGENT_ID explicitly`,
