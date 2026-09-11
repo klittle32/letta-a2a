@@ -5,17 +5,29 @@ export interface ExampleConfig {
   lettaAgentName: string;
   lettaModel?: string;
   lettaWorkingDirectory: string;
+  clientAdapter: "sdk" | "mod";
+  outboundRoutes?: Record<string, string>;
 }
 
 export function loadConfig(environment = process.env): ExampleConfig {
   const port = parsePort(environment.PORT);
+  const clientAdapter = environment.A2A_CLIENT_ADAPTER ?? "sdk";
+  if (clientAdapter !== "sdk" && clientAdapter !== "mod") {
+    throw new Error("A2A_CLIENT_ADAPTER must be sdk or mod");
+  }
+  if (clientAdapter === "mod" && environment.A2A_REMOTE_ROUTES !== undefined) {
+    throw new Error(
+      "A2A_REMOTE_ROUTES configures SDK tools; mod mode uses its own Letta configuration",
+    );
+  }
 
   return {
     port,
-    publicBaseUrl: (environment.A2A_PUBLIC_BASE_URL ?? `http://127.0.0.1:${port}`).replace(
-      /\/$/,
-      "",
-    ),
+    clientAdapter,
+    outboundRoutes: parseRoutes(environment.A2A_REMOTE_ROUTES),
+    publicBaseUrl: (
+      environment.A2A_PUBLIC_BASE_URL ?? `http://127.0.0.1:${port}`
+    ).replace(/\/$/, ""),
     lettaAgentId: optional(environment.A2A_LETTA_AGENT_ID),
     lettaAgentName:
       optional(environment.A2A_LETTA_AGENT_NAME) ??
@@ -24,6 +36,24 @@ export function loadConfig(environment = process.env): ExampleConfig {
     lettaWorkingDirectory:
       optional(environment.A2A_LETTA_WORKING_DIRECTORY) ?? process.cwd(),
   };
+}
+
+function parseRoutes(
+  raw: string | undefined,
+): Record<string, string> | undefined {
+  if (raw === undefined) return undefined;
+  const routes: unknown = JSON.parse(raw);
+  if (
+    !routes ||
+    typeof routes !== "object" ||
+    Array.isArray(routes) ||
+    Object.values(routes).some((value) => typeof value !== "string")
+  ) {
+    throw new Error(
+      "A2A_REMOTE_ROUTES must be a JSON object mapping names to URLs",
+    );
+  }
+  return routes as Record<string, string>;
 }
 
 function parsePort(raw: string | undefined): number {

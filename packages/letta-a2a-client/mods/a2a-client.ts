@@ -1,78 +1,77 @@
-import {
-  PollingA2AInvoker,
-  createOfficialClientProvider,
-} from "../src/a2a-invoker.js";
+import { createA2AClient } from "../src/index.js";
 import { loadConfig } from "../src/config.js";
 import { FileContextStore } from "../src/context-store.js";
 import type { LettaModApi } from "../src/mod-api.js";
 import { A2AModController } from "../src/mod-controller.js";
-import { A2AToolService } from "../src/tool-service.js";
+import { getA2AToolDefinitions } from "../src/tool-operations.js";
 
 export default function activate(letta: LettaModApi) {
   if (!letta.capabilities.tools) return;
 
+  const owner = new AbortController();
+  let client: ReturnType<typeof createA2AClient> | undefined;
   let controller: A2AModController | undefined;
   let configurationError: string | undefined;
   try {
     const config = loadConfig();
-    controller = new A2AModController(
-      config,
-      new A2AToolService(
-        config.routes,
-        new PollingA2AInvoker(createOfficialClientProvider(), config),
-        new FileContextStore(config.contextStorePath),
-      ),
-    );
+    client = createA2AClient({
+      routes: config.routes,
+      timeoutMs: config.timeoutMs,
+      pollIntervalMs: config.pollIntervalMs,
+      contextStore: new FileContextStore(config.contextStorePath),
+    });
+    controller = new A2AModController(client);
   } catch (error) {
-    configurationError = error instanceof Error ? error.message : String(error);
+    configurationError =
+      error instanceof Error ? error.message : "Invalid A2A configuration";
     letta.diagnostics.report({
-      message: `a2a_invoke unavailable: ${configurationError}`,
+      message: `A2A tools unavailable: ${configurationError}`,
       severity: "error",
     });
   }
 
-  const targets = controller?.targets().join(", ") ?? "none configured";
-  return letta.tools.register({
-    name: "a2a_invoke",
-    description:
-      `Call a configured remote A2A agent and return its final text result. ` +
-      `Remote context is reused automatically for this Letta conversation and target. ` +
-      `Configured targets: ${targets}.`,
-    parameters: {
-      type: "object",
-      properties: {
-        target: {
-          type: "string",
-          description: "Configured A2A target name.",
-        },
-        message: {
-          type: "string",
-          description: "Complete task or question to send to the remote agent.",
-        },
-        context_id: {
-          type: "string",
-          description:
-            "Optional explicit remote A2A context ID. Usually omit this and let the mod preserve continuity.",
-        },
-        new_context: {
-          type: "boolean",
-          description:
-            "Start a fresh remote A2A context instead of continuing the saved one.",
-        },
-      },
-      required: ["target", "message"],
-      additionalProperties: false,
-    },
-    requiresApproval: false,
-    parallelSafe: false,
-    async run(context) {
-      if (!controller) {
-        return {
-          status: "error",
-          content: configurationError ?? "A2A client is not configured",
-        };
+  const unregister: Array<() => void> = [];
+  let closed = false;
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    owner.abort();
+    client?.close();
+    for (const remove of unregister.reverse()) {
+      try {
+        remove();
+      } catch {
+        letta.diagnostics.report({
+          message: "Failed to unregister an A2A tool",
+          severity: "error",
+        });
       }
-      return controller.run(context);
-    },
-  });
+    }
+  };
+  try {
+    for (const definition of getA2AToolDefinitions(
+      client ?? { targets: () => [] },
+    )) {
+      unregister.push(
+        letta.tools.register({
+          ...definition,
+          async run(context) {
+            if (!controller)
+              return {
+                status: "error",
+                content: configurationError ?? "A2A client is not configured",
+              };
+            return controller.run(definition.name, {
+              ...context,
+              signal: AbortSignal.any([owner.signal, context.signal]),
+            });
+          },
+        }),
+      );
+    }
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+  return cleanup;
 }

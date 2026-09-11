@@ -6,12 +6,12 @@ import {
 } from "../src/tool-policy.js";
 
 describe("Example 14 SDK tool policy", () => {
-  test("uses no base client tools and only allowlists a2a_invoke", () => {
+  test("uses no base client tools and only allowlists the two A2A tools", () => {
     const options = createA2ASessionOptions("/tmp/example-14");
 
     expect(options).toMatchObject({
       cwd: "/tmp/example-14",
-      allowedTools: ["a2a_invoke"],
+      allowedTools: ["a2a_invoke", "a2a_task"],
       toolset: { base: "none" },
       permissionMode: "strict",
       skillSources: [],
@@ -27,9 +27,12 @@ describe("Example 14 SDK tool policy", () => {
       updatedInput: null,
       updatedPermissions: [],
     });
+    await expect(canUseTool?.("a2a_task", {})).resolves.toMatchObject({
+      behavior: "allow",
+    });
     await expect(canUseTool?.("exec_command", {})).resolves.toEqual({
       behavior: "deny",
-      message: "Example 14 permits only a2a_invoke",
+      message: "Tool is not allowed by this session policy",
       interrupt: false,
     });
   });

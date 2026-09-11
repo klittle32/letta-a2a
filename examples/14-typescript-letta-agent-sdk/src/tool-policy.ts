@@ -1,4 +1,5 @@
 import type { CreateSessionOptions } from "@letta-ai/letta-agent-sdk";
+import { createToolPolicy } from "letta-a2a-bridge";
 
 interface PersistedAgentToolProjection {
   id: string;
@@ -10,27 +11,7 @@ interface PersistedAgentToolProjection {
  * toolset, and resolve approval requests deterministically at the SDK boundary.
  */
 export function createA2ASessionOptions(cwd: string): CreateSessionOptions {
-  return {
-    cwd,
-    allowedTools: ["a2a_invoke"],
-    toolset: { base: "none" },
-    permissionMode: "strict",
-    skillSources: [],
-    canUseTool: async (toolName) => {
-      if (toolName === "a2a_invoke") {
-        return {
-          behavior: "allow",
-          updatedInput: null,
-          updatedPermissions: [],
-        };
-      }
-      return {
-        behavior: "deny",
-        message: "Example 14 permits only a2a_invoke",
-        interrupt: false,
-      };
-    },
-  };
+  return { ...createToolPolicy(["a2a_invoke", "a2a_task"]), cwd };
 }
 
 /** Client allowlists do not remove persisted agent tools, so reuse is fail-closed. */

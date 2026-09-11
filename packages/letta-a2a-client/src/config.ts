@@ -43,18 +43,21 @@ export function loadConfig(
 }
 
 export function parseConfig(raw: unknown, home: string): A2AClientConfig {
-  if (!isRecord(raw)) throw new Error("A2A configuration must be a JSON object");
+  if (!isRecord(raw))
+    throw new Error("A2A configuration must be a JSON object");
   if (!isRecord(raw.routes) || Object.keys(raw.routes).length === 0) {
     throw new Error("A2A configuration must contain at least one route");
   }
 
-  const routes: Record<string, string> = {};
+  const routes: Record<string, string> = Object.create(null);
   for (const [target, value] of Object.entries(raw.routes)) {
     if (!/^[A-Za-z0-9._-]+$/.test(target)) {
       throw new Error(`A2A route name ${JSON.stringify(target)} is invalid`);
     }
     if (typeof value !== "string" || !value.trim()) {
-      throw new Error(`A2A route ${JSON.stringify(target)} must be a URL string`);
+      throw new Error(
+        `A2A route ${JSON.stringify(target)} must be a URL string`,
+      );
     }
     routes[target] = normalizeRouteUrl(target, value);
   }
@@ -73,13 +76,7 @@ export function parseConfig(raw: unknown, home: string): A2AClientConfig {
       5_000,
       "pollIntervalMs",
     ),
-    timeoutMs: readInteger(
-      raw.timeoutMs,
-      120_000,
-      1_000,
-      600_000,
-      "timeoutMs",
-    ),
+    timeoutMs: readInteger(raw.timeoutMs, 120_000, 1_000, 600_000, "timeoutMs"),
     contextStorePath: contextStorePath
       ? isAbsolute(contextStorePath)
         ? contextStorePath
@@ -97,7 +94,9 @@ function normalizeRouteUrl(target: string, raw: string): string {
   }
 
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error(`A2A route ${JSON.stringify(target)} must use http or https`);
+    throw new Error(
+      `A2A route ${JSON.stringify(target)} must use http or https`,
+    );
   }
   if (url.username || url.password) {
     throw new Error(
@@ -121,8 +120,14 @@ function readInteger(
   name: string,
 ): number {
   if (value === undefined) return fallback;
-  if (!Number.isInteger(value) || (value as number) < minimum || (value as number) > maximum) {
-    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
+  if (
+    !Number.isInteger(value) ||
+    (value as number) < minimum ||
+    (value as number) > maximum
+  ) {
+    throw new Error(
+      `${name} must be an integer between ${minimum} and ${maximum}`,
+    );
   }
   return value as number;
 }

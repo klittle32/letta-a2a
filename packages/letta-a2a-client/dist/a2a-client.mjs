@@ -5863,10 +5863,124 @@ var CaseInsensitiveMap = class extends Map {
   }
 };
 
+// src/operation.ts
+function bounded(work, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    let attached = true;
+    const detach = () => {
+      if (!attached)
+        return;
+      attached = false;
+      signal.removeEventListener("abort", abort);
+    };
+    const abort = () => {
+      detach();
+      reject(signal.reason);
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    Promise.resolve().then(() => {
+      signal.throwIfAborted();
+      return work();
+    }).then((value) => {
+      detach();
+      resolve(value);
+    }, (error) => {
+      detach();
+      reject(error);
+    });
+  });
+}
+
+class Operation {
+  caller;
+  signal;
+  controller = new AbortController;
+  timer;
+  deadline;
+  workDeadline;
+  constructor(timeoutMs, caller, reserveMs = 0, deadline) {
+    this.caller = caller;
+    const now = performance.now();
+    this.deadline = Math.min(now + timeoutMs, deadline ?? Infinity);
+    const remaining = Math.max(0, this.deadline - now);
+    this.workDeadline = this.deadline - Math.min(reserveMs, remaining / 5);
+    this.signal = caller ? AbortSignal.any([caller, this.controller.signal]) : this.controller.signal;
+    if (!Number.isFinite(this.deadline) || this.workDeadline <= now) {
+      this.expire();
+    } else {
+      this.timer = setTimeout(() => this.expire(), this.workDeadline - now);
+    }
+  }
+  async run(work) {
+    const checkDeadline = () => {
+      if (performance.now() >= this.workDeadline)
+        this.expire();
+      this.signal.throwIfAborted();
+    };
+    const result = await bounded(() => {
+      checkDeadline();
+      return work();
+    }, this.signal);
+    checkDeadline();
+    return result;
+  }
+  async cleanup(work, limitMs) {
+    const now = performance.now();
+    const cleanupDeadline = Math.min(this.deadline, now + limitMs);
+    if (!(cleanupDeadline > now))
+      return;
+    const controller = new AbortController;
+    const expire = () => controller.abort(new Error("A2A cleanup timed out"));
+    const timer = setTimeout(expire, cleanupDeadline - now);
+    try {
+      const value = await bounded(() => {
+        if (performance.now() >= cleanupDeadline)
+          expire();
+        controller.signal.throwIfAborted();
+        return work(controller.signal);
+      }, controller.signal);
+      if (performance.now() >= cleanupDeadline)
+        return;
+      return value;
+    } catch {
+      return;
+    } finally {
+      clearTimeout(timer);
+      expire();
+    }
+  }
+  expire() {
+    this.controller.abort(new Error("A2A operation timed out"));
+  }
+  close() {
+    clearTimeout(this.timer);
+    this.controller.abort(new Error("A2A operation closed"));
+  }
+}
+
 // src/a2a-invoker.ts
-class A2AInvocationCancelledError extends Error {
-  constructor() {
-    super("A2A invocation was cancelled");
+class A2AInvocationError extends Error {
+  submissionAttempted;
+  messageId;
+  task;
+  cancellation;
+  constructor(message, details = { submissionAttempted: false }) {
+    super(message, { cause: details.cause });
+    this.name = "A2AInvocationError";
+    this.submissionAttempted = details.submissionAttempted;
+    this.messageId = details.messageId;
+    this.task = details.task;
+    this.cancellation = details.cancellation;
+  }
+}
+
+class A2AInvocationCancelledError extends A2AInvocationError {
+  constructor(details = { submissionAttempted: false }) {
+    super("A2A invocation was cancelled", details);
     this.name = "A2AInvocationCancelledError";
   }
 }
@@ -5874,134 +5988,270 @@ class A2AInvocationCancelledError extends Error {
 class PollingA2AInvoker {
   clients;
   options;
+  cancelTimeoutMs;
   constructor(clients, options) {
     this.clients = clients;
     this.options = options;
+    this.cancelTimeoutMs = options.cancelTimeoutMs ?? 1000;
+    if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0 || !Number.isFinite(options.pollIntervalMs) || options.pollIntervalMs < 0 || !Number.isFinite(this.cancelTimeoutMs) || this.cancelTimeoutMs <= 0) {
+      throw new Error("A2A operation budgets must be finite and positive (poll interval may be zero)");
+    }
   }
   async invoke(input) {
-    const client = await this.clients(input.url);
-    const timeoutSignal = AbortSignal.timeout(this.options.timeoutMs);
-    const signal = AbortSignal.any([input.signal, timeoutSignal]);
-    let acceptedTaskId;
+    const operation = this.operation(input.signal, true, input.deadline);
+    const execution = { submissionAttempted: false, identity: {} };
     try {
-      const sent = await client.sendMessage({
-        tenant: "",
-        message: userMessage(input.message, input.contextId),
-        configuration: {
-          acceptedOutputModes: ["text/plain"],
-          taskPushNotificationConfig: undefined,
-          returnImmediately: true
-        },
-        metadata: undefined
-      }, { signal });
-      if (isMessage(sent))
-        return messageResult(sent);
-      acceptedTaskId = sent.id;
+      const request = requestFor(input);
+      execution.messageId = request.message?.messageId;
+      execution.identity = {
+        taskId: request.message?.taskId,
+        contextId: request.message?.contextId
+      };
+      const client = await operation.run(() => this.clients(input.url, operation.signal));
+      execution.client = client;
+      const sent = await operation.run(() => {
+        execution.submissionAttempted = true;
+        return client.sendMessage(request, { signal: operation.signal });
+      });
+      if ("messageId" in sent) {
+        checkIdentity(execution.identity, sent.taskId, sent.contextId, false);
+        return sent;
+      }
       let task = sent;
-      while (!isTerminal(task.status?.state)) {
-        await sleep(this.options.pollIntervalMs, undefined, { signal });
-        task = await client.getTask({ tenant: "", id: task.id, historyLength: 10 }, { signal });
+      while (true) {
+        await this.accept(task, execution, operation, input);
+        if (isStopped(task.status?.state))
+          return task;
+        await operation.run(() => sleep(this.options.pollIntervalMs, undefined, {
+          signal: operation.signal
+        }));
+        task = await operation.run(() => client.getTask({ tenant: "", id: task.id, historyLength: undefined }, { signal: operation.signal }));
       }
-      return taskResult(task);
-    } catch (error) {
-      if (signal.aborted && acceptedTaskId) {
-        await bestEffortCancel(client, acceptedTaskId);
+    } catch (cause) {
+      await this.cancelAccepted(execution, operation);
+      throw failure(operation, execution, cause);
+    } finally {
+      operation.close();
+    }
+  }
+  connect(url, signal) {
+    return this.read(url, signal, (client) => client);
+  }
+  getTask(url, id, signal) {
+    return this.read(url, signal, async (client, operation) => {
+      const task = await client.getTask({ tenant: "", id, historyLength: undefined }, { signal: operation.signal });
+      checkIdentity({ taskId: id }, task.id, task.contextId);
+      return task;
+    });
+  }
+  cancelTask(url, id, signal) {
+    return this.read(url, signal, async (client, operation) => {
+      const task = await client.cancelTask({ tenant: "", id, metadata: undefined }, { signal: operation.signal });
+      checkIdentity({ taskId: id }, task.id, task.contextId);
+      return task;
+    });
+  }
+  stream(input) {
+    return this.events(input.url, input.signal, input);
+  }
+  subscribe(url, id, signal) {
+    return this.events(url, signal, undefined, id);
+  }
+  operation(signal, cleanup = false, deadline) {
+    return new Operation(this.options.timeoutMs, signal, cleanup ? this.cancelTimeoutMs : 0, deadline);
+  }
+  async read(url, signal, work) {
+    const operation = this.operation(signal);
+    try {
+      const client = await operation.run(() => this.clients(url, operation.signal));
+      return await operation.run(() => work(client, operation));
+    } catch (cause) {
+      throw failure(operation, { submissionAttempted: false }, cause);
+    } finally {
+      operation.close();
+    }
+  }
+  async accept(task, execution, operation, input) {
+    pinIdentity(execution.identity, task.id, task.contextId);
+    execution.task = task;
+    execution.acceptedId = task.id;
+    await operation.run(() => input?.onTask?.(task));
+  }
+  async cancelAccepted(execution, operation) {
+    const { client, acceptedId } = execution;
+    if (!client || !acceptedId)
+      return;
+    execution.cancellation = await operation.cleanup(async (signal) => {
+      const task = await client.cancelTask({ tenant: "", id: acceptedId, metadata: undefined }, { signal });
+      checkIdentity(execution.identity, task.id, task.contextId);
+      return task;
+    }, this.cancelTimeoutMs);
+  }
+  async* events(url, signal, input, id) {
+    const operation = this.operation(signal, true, input?.deadline);
+    const execution = {
+      submissionAttempted: false,
+      identity: { taskId: id }
+    };
+    let iterator;
+    let complete = false;
+    let stopped = false;
+    let failed = false;
+    try {
+      const request = input ? requestFor(input) : undefined;
+      execution.messageId = request?.message?.messageId;
+      if (request)
+        execution.identity = {
+          taskId: request.message?.taskId,
+          contextId: request.message?.contextId
+        };
+      const client = await operation.run(() => this.clients(url, operation.signal));
+      execution.client = client;
+      iterator = await operation.run(() => request ? client.sendMessageStream(request, { signal: operation.signal }) : client.resubscribeTask({ tenant: "", id }, { signal: operation.signal }));
+      while (true) {
+        const current = iterator;
+        const next = await operation.run(() => {
+          if (input)
+            execution.submissionAttempted = true;
+          return current.next();
+        });
+        if (next.done) {
+          complete = true;
+          return;
+        }
+        const payload = next.value.payload;
+        if (payload?.$case === "task") {
+          await this.accept(payload.value, execution, operation, input);
+          stopped = isStopped(payload.value.status?.state);
+        } else if (payload?.$case === "statusUpdate" || payload?.$case === "artifactUpdate") {
+          pinIdentity(execution.identity, payload.value.taskId, payload.value.contextId);
+          execution.acceptedId = payload.value.taskId;
+          if (payload.$case === "statusUpdate")
+            stopped = isStopped(payload.value.status?.state);
+        } else if (payload?.$case === "message") {
+          pinIdentity(execution.identity, payload.value.taskId, payload.value.contextId, false);
+        }
+        yield next.value;
       }
-      if (input.signal.aborted)
-        throw new A2AInvocationCancelledError;
-      if (timeoutSignal.aborted) {
-        throw new Error(`A2A invocation exceeded ${Math.round(this.options.timeoutMs / 1000)} seconds`);
+    } catch (cause) {
+      failed = true;
+      if (input)
+        await this.cancelAccepted(execution, operation);
+      throw failure(operation, execution, cause);
+    } finally {
+      if (input && !complete && !failed && !stopped)
+        await this.cancelAccepted(execution, operation);
+      operation.close();
+      if (iterator) {
+        const current = iterator;
+        const closing = Promise.resolve().then(() => current.return());
+        closing.catch(() => {});
+        await operation.cleanup(() => closing, this.cancelTimeoutMs);
       }
-      throw error;
     }
   }
 }
-function createOfficialClientProvider() {
-  const factory = new ClientFactory({
-    transports: [new JsonRpcTransportFactory]
-  });
-  const clients = new Map;
-  return (url) => {
-    let client = clients.get(url);
-    if (!client) {
-      client = factory.createFromUrl(url);
-      clients.set(url, client);
-      client.catch(() => clients.delete(url));
-    }
-    return client;
-  };
+function failure(operation, details, cause) {
+  const context = { ...details, cause };
+  if (operation.caller?.aborted)
+    return new A2AInvocationCancelledError(context);
+  return new A2AInvocationError(operation.signal.aborted ? "A2A operation timed out" : "A2A operation failed", context);
 }
-function userMessage(text, contextId) {
-  return {
+function requestFor(input) {
+  const original = typeof input.message === "string" ? {
     messageId: crypto.randomUUID(),
-    contextId: contextId ?? "",
-    taskId: "",
     role: Role.ROLE_USER,
-    parts: [
-      {
-        content: { $case: "text", value: text },
-        metadata: undefined,
-        filename: "",
-        mediaType: "text/plain"
-      }
-    ],
+    contextId: "",
+    taskId: "",
     metadata: undefined,
     extensions: [],
-    referenceTaskIds: []
-  };
-}
-function isMessage(result) {
-  return "messageId" in result;
-}
-function messageResult(message) {
+    referenceTaskIds: [],
+    parts: [
+      {
+        content: { $case: "text", value: input.message },
+        mediaType: "text/plain",
+        filename: "",
+        metadata: undefined
+      }
+    ]
+  } : input.message;
+  if (input.contextId !== undefined && original.contextId && input.contextId !== original.contextId || input.taskId !== undefined && original.taskId && input.taskId !== original.taskId) {
+    throw new Error("Conflicting explicit A2A message identity");
+  }
   return {
-    ok: true,
-    status: "completed",
-    taskId: message.taskId || undefined,
-    contextId: message.contextId || undefined,
-    text: readMessageText(message)
+    tenant: "",
+    message: {
+      ...original,
+      contextId: input.contextId ?? original.contextId,
+      taskId: input.taskId ?? original.taskId
+    },
+    configuration: {
+      acceptedOutputModes: [],
+      taskPushNotificationConfig: undefined,
+      returnImmediately: true
+    },
+    metadata: undefined
   };
 }
-function taskResult(task) {
-  const status = statusName(task.status?.state);
-  const artifactText = task.artifacts.flatMap((artifact) => artifact.parts.flatMap((part) => part.content?.$case === "text" ? [part.content.value] : []));
-  const statusText = task.status?.message ? readMessageText(task.status.message) : "";
-  return {
-    ok: status === "completed",
-    status,
-    taskId: task.id,
-    contextId: task.contextId,
-    text: artifactText.join("") || statusText
-  };
-}
-function readMessageText(message) {
-  return message.parts.flatMap((part) => part.content?.$case === "text" ? [part.content.value] : []).join("");
-}
-function isTerminal(state) {
-  return state === TaskState.TASK_STATE_COMPLETED || state === TaskState.TASK_STATE_FAILED || state === TaskState.TASK_STATE_CANCELED || state === TaskState.TASK_STATE_REJECTED || state === TaskState.TASK_STATE_INPUT_REQUIRED || state === TaskState.TASK_STATE_AUTH_REQUIRED;
-}
-function statusName(state) {
-  switch (state) {
-    case TaskState.TASK_STATE_COMPLETED:
-      return "completed";
-    case TaskState.TASK_STATE_FAILED:
-      return "failed";
-    case TaskState.TASK_STATE_CANCELED:
-      return "cancelled";
-    case TaskState.TASK_STATE_REJECTED:
-      return "rejected";
-    case TaskState.TASK_STATE_INPUT_REQUIRED:
-      return "input_required";
-    case TaskState.TASK_STATE_AUTH_REQUIRED:
-      return "auth_required";
-    default:
-      throw new Error(`Task is not terminal: ${String(state)}`);
+function checkIdentity(expected, taskId, contextId, requireTask = true) {
+  if (requireTask && (!taskId || !contextId) || expected.taskId && expected.taskId !== taskId || expected.contextId && expected.contextId !== contextId) {
+    throw new Error("A2A response identity conflicts with the operation");
   }
 }
-async function bestEffortCancel(client, taskId) {
-  try {
-    await client.cancelTask({ tenant: "", id: taskId, metadata: undefined }, { signal: AbortSignal.timeout(5000) });
-  } catch {}
+function pinIdentity(expected, taskId, contextId, requireTask = true) {
+  checkIdentity(expected, taskId, contextId, requireTask);
+  if (taskId)
+    expected.taskId = taskId;
+  if (contextId)
+    expected.contextId = contextId;
+}
+function isStopped(state) {
+  return state === TaskState.TASK_STATE_COMPLETED || state === TaskState.TASK_STATE_FAILED || state === TaskState.TASK_STATE_CANCELED || state === TaskState.TASK_STATE_REJECTED || state === TaskState.TASK_STATE_INPUT_REQUIRED || state === TaskState.TASK_STATE_AUTH_REQUIRED;
+}
+function createOfficialClientProvider(options = {}) {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  return async (url, signal) => {
+    const operation = new Operation(options.discoveryTimeoutMs ?? 1e4, signal);
+    try {
+      const origin = new URL(url);
+      const check = (value) => {
+        const target = new URL(value);
+        if (!["http:", "https:"].includes(target.protocol) || target.origin !== origin.origin) {
+          throw new Error("A2A endpoint must use the configured HTTP(S) origin");
+        }
+      };
+      check(url);
+      const transportFetch = Object.assign((request, init) => {
+        check(typeof request === "string" ? request : request instanceof URL ? request.href : request.url);
+        return fetchImpl(request, { ...init, redirect: "error" });
+      }, fetchImpl);
+      const discoveryFetch = Object.assign((request, init) => operation.run(() => transportFetch(request, {
+        ...init,
+        signal: operation.signal
+      })), fetchImpl);
+      const resolver = new DefaultAgentCardResolver({
+        fetchImpl: discoveryFetch
+      });
+      const factory = new ClientFactory({
+        transports: [
+          new JsonRpcTransportFactory({ fetchImpl: transportFetch })
+        ],
+        cardResolver: {
+          resolve: async (base, path) => {
+            const card = await resolver.resolve(base, path);
+            for (const endpoint of card.supportedInterfaces)
+              check(endpoint.url);
+            return card;
+          }
+        }
+      });
+      return await operation.run(() => factory.createFromUrl(url));
+    } catch (cause) {
+      throw failure(operation, { submissionAttempted: false }, cause);
+    } finally {
+      operation.close();
+    }
+  };
 }
 
 // src/config.ts
@@ -6030,7 +6280,7 @@ function parseConfig(raw, home) {
   if (!isRecord(raw.routes) || Object.keys(raw.routes).length === 0) {
     throw new Error("A2A configuration must contain at least one route");
   }
-  const routes = {};
+  const routes = Object.create(null);
   for (const [target, value] of Object.entries(raw.routes)) {
     if (!/^[A-Za-z0-9._-]+$/.test(target)) {
       throw new Error(`A2A route name ${JSON.stringify(target)} is invalid`);
@@ -6094,19 +6344,56 @@ function isRecord(value) {
 }
 
 // src/context-store.ts
+import { createHash, randomUUID } from "node:crypto";
 import {
   mkdir,
   open,
   readFile,
   rename,
-  stat,
   unlink,
   writeFile
 } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join as join2 } from "node:path";
 import { setTimeout as sleep2 } from "node:timers/promises";
-var LOCK_WAIT_MS = 5000;
-var LOCK_STALE_MS = 30000;
+var WRITE_LOCK_WAIT_MS = 5000;
+
+class MemoryContextStore {
+  values = new Map;
+  tails = new Map;
+  async get(key) {
+    return this.values.get(key);
+  }
+  async set(key, value) {
+    this.values.set(key, value);
+  }
+  async withLock(key, signal, work) {
+    signal.throwIfAborted();
+    const previous = this.tails.get(key) ?? Promise.resolve();
+    let release;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => gate);
+    this.tails.set(key, tail);
+    tail.then(() => {
+      if (this.tails.get(key) === tail)
+        this.tails.delete(key);
+    });
+    let onAbort;
+    const canceled = new Promise((_, reject) => {
+      onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      await Promise.race([previous, canceled]);
+      signal.throwIfAborted();
+      return await work();
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+      release();
+    }
+  }
+}
 
 class FileContextStore {
   path;
@@ -6116,13 +6403,26 @@ class FileContextStore {
   async get(key) {
     return (await this.read())[key];
   }
-  async set(key, contextId) {
+  async withLock(key, signal, work) {
+    signal.throwIfAborted();
+    const directory = `${this.path}.locks`;
+    await mkdir(directory, { recursive: true });
+    const hash = createHash("sha256").update(key).digest("hex");
+    const release = await acquireFileLock(join2(directory, `${hash}.lock`), signal);
+    try {
+      signal.throwIfAborted();
+      return await work();
+    } finally {
+      await release();
+    }
+  }
+  async set(key, value) {
     await mkdir(dirname(this.path), { recursive: true });
-    const release = await acquireFileLock(`${this.path}.lock`);
+    const release = await acquireFileLock(`${this.path}.lock`, AbortSignal.timeout(WRITE_LOCK_WAIT_MS));
     try {
       const current = await this.read();
-      current[key] = contextId;
-      const temporary = `${this.path}.${process.pid}.${crypto.randomUUID()}.tmp`;
+      current[key] = value;
+      const temporary = `${this.path}.${process.pid}.${randomUUID()}.tmp`;
       try {
         await writeFile(temporary, `${JSON.stringify(current, null, 2)}
 `, {
@@ -6146,7 +6446,7 @@ class FileContextStore {
       text = await readFile(this.path, "utf8");
     } catch (error) {
       if (isNodeError(error) && error.code === "ENOENT")
-        return {};
+        return Object.create(null);
       throw error;
     }
     let parsed;
@@ -6158,9 +6458,9 @@ class FileContextStore {
     if (!isRecord2(parsed)) {
       throw new Error(`${this.path} must contain a JSON object`);
     }
-    const result = {};
+    const result = Object.create(null);
     for (const [key, value] of Object.entries(parsed)) {
-      if (typeof value !== "string" || !value) {
+      if (typeof value !== "string") {
         throw new Error(`${this.path} contains an invalid context for ${key}`);
       }
       result[key] = value;
@@ -6168,67 +6468,60 @@ class FileContextStore {
     return result;
   }
 }
-async function acquireFileLock(path) {
-  const deadline = Date.now() + LOCK_WAIT_MS;
+async function acquireFileLock(path, signal) {
   while (true) {
+    if (signal.aborted)
+      throw lockWaitError(path, signal);
     let handle;
     try {
       handle = await open(path, "wx", 384);
     } catch (error) {
       if (!isNodeError(error) || error.code !== "EEXIST")
         throw error;
-      if (await isStaleLock(path)) {
-        await unlink(path).catch((unlinkError) => {
-          if (!isNodeError(unlinkError) || unlinkError.code !== "ENOENT") {
-            throw unlinkError;
-          }
-        });
-        continue;
+      try {
+        await sleep2(20, undefined, { signal });
+      } catch (error) {
+        if (signal.aborted)
+          throw lockWaitError(path, signal);
+        throw error;
       }
-      if (Date.now() >= deadline) {
-        throw new Error(`Timed out waiting for context-store lock ${path}`);
-      }
-      await sleep2(10 + Math.floor(Math.random() * 20));
       continue;
     }
-    const token = `${process.pid}:${crypto.randomUUID()}`;
+    const token = `${process.pid}:${randomUUID()}`;
+    const release = async () => {
+      let currentToken;
+      try {
+        currentToken = (await readFile(path, "utf8")).trim();
+      } catch (error) {
+        if (isNodeError(error) && error.code === "ENOENT")
+          return;
+        throw error;
+      }
+      if (currentToken === token)
+        await unlink(path);
+    };
     try {
       await handle.writeFile(`${token}
-${Date.now()}
 `, "utf8");
-      return async () => {
-        await handle.close();
-        let currentToken;
-        try {
-          currentToken = (await readFile(path, "utf8")).split(`
-`, 1)[0] ?? "";
-        } catch (error) {
-          if (isNodeError(error) && error.code === "ENOENT")
-            return;
-          throw error;
-        }
-        if (currentToken === token)
-          await unlink(path);
-      };
     } catch (error) {
-      await handle.close().catch(() => {
+      await release().catch(() => {
         return;
       });
-      await unlink(path).catch(() => {
-        return;
+      throw new Error(`Could not initialize lock ${path}; ${RECOVERY_NOTE}`, {
+        cause: error
       });
-      throw error;
+    } finally {
+      await handle.close();
     }
+    return release;
   }
 }
-async function isStaleLock(path) {
-  try {
-    return Date.now() - (await stat(path)).mtimeMs >= LOCK_STALE_MS;
-  } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT")
-      return false;
-    throw error;
-  }
+var RECOVERY_NOTE = "manual recovery: only remove this lock after confirming no process is using it; locks are never automatically reclaimed";
+function lockWaitError(path, signal) {
+  const reason = signal.reason instanceof Error ? signal.reason.message : String(signal.reason);
+  return new Error(`Context-store lock wait canceled for ${path}: ${reason}; ${RECOVERY_NOTE}`, {
+    cause: signal.reason
+  });
 }
 function isNodeError(error) {
   return error instanceof Error && "code" in error;
@@ -6237,200 +6530,824 @@ function isRecord2(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-// src/mod-controller.ts
-class A2AModController {
-  config;
-  service;
-  constructor(config, service) {
-    this.config = config;
-    this.service = service;
-  }
-  async run(context) {
-    const input = readArguments(context.args);
-    const conversationId = context.conversation.id ?? context.sessionId;
-    if (!conversationId) {
-      return toolError("The active Letta conversation has no stable ID");
-    }
-    try {
-      const result = await this.service.invoke({
-        ...input,
-        localScope: `${context.agent.id ?? "unbound-agent"}/${conversationId}`,
-        signal: context.signal
-      });
-      const output = JSON.stringify({ target: input.target, ...result });
-      return result.ok ? output : toolError(output);
-    } catch (error) {
-      if (context.signal.aborted)
-        throw error;
-      return toolError(error instanceof Error ? error.message : String(error));
-    }
-  }
-  targets() {
-    return Object.keys(this.config.routes).sort();
-  }
-}
-function readArguments(args) {
-  const target = requiredString(args.target, "target");
-  const message = requiredString(args.message, "message");
-  const contextId = optionalString(args.context_id, "context_id");
-  const newContext = optionalBoolean(args.new_context, "new_context");
-  if (contextId && newContext) {
-    throw new Error("context_id and new_context cannot be used together");
-  }
-  return { target, message, contextId, newContext };
-}
-function requiredString(value, name) {
-  if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`${name} is required`);
-  }
-  return value.trim();
-}
-function optionalString(value, name) {
-  if (value === undefined)
-    return;
-  if (typeof value !== "string" || !value.trim()) {
-    throw new Error(`${name} must be a non-empty string`);
-  }
-  return value.trim();
-}
-function optionalBoolean(value, name) {
-  if (value === undefined)
-    return;
-  if (typeof value !== "boolean")
-    throw new Error(`${name} must be a boolean`);
-  return value;
-}
-function toolError(content) {
-  return { status: "error", content };
-}
-
 // src/tool-service.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
+var bindingKey = (scope, url) => JSON.stringify(["a2a-binding", scope, url]);
+var executionKey = (url, context) => JSON.stringify(["a2a-execution", url, context]);
+var terminal = (state) => state === TaskState.TASK_STATE_COMPLETED || state === TaskState.TASK_STATE_FAILED || state === TaskState.TASK_STATE_CANCELED || state === TaskState.TASK_STATE_REJECTED;
+var interrupted = (state) => state === TaskState.TASK_STATE_INPUT_REQUIRED || state === TaskState.TASK_STATE_AUTH_REQUIRED;
+
 class A2AToolService {
   routes;
   invoker;
   contexts;
-  tails = new Map;
-  constructor(routes, invoker, contexts) {
+  closed = new AbortController;
+  owners = new WeakMap;
+  timeoutMs;
+  constructor(routes, invoker, contexts, options = {}) {
     this.routes = routes;
     this.invoker = invoker;
     this.contexts = contexts;
+    this.timeoutMs = options.timeoutMs ?? 120000;
+    if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0)
+      throw new Error("A2A timeoutMs must be positive and finite");
   }
-  async invoke(input) {
-    const url = this.routes[input.target];
-    if (!url) {
-      throw new Error(`Unknown A2A target ${JSON.stringify(input.target)}. Configured targets: ${Object.keys(this.routes).sort().join(", ")}`);
-    }
-    if (!input.message.trim())
-      throw new Error("A2A message is required");
-    const stateKey = `${input.localScope}/${input.target}`;
-    return this.withLock(stateKey, input.signal, async () => {
-      const contextId = input.contextId ?? (input.newContext ? undefined : await this.contexts.get(stateKey));
-      const result = await this.invoker.invoke({
-        url,
-        message: input.message.trim(),
-        contextId,
-        signal: input.signal
-      });
-      if (result.contextId) {
-        await this.contexts.set(stateKey, result.contextId);
-      }
+  targets() {
+    return Object.keys(this.routes).sort();
+  }
+  connect(target, signal) {
+    return this.operation(signal, {}, (s) => this.invoker.connect(this.endpoint(target), s));
+  }
+  close() {
+    this.closed.abort(new Error("A2A service closed"));
+  }
+  async drain(signal) {
+    await Promise.allSettled([...this.owners.get(signal) ?? []]);
+  }
+  task(input) {
+    return this.operation(input.signal, {}, async (signal) => {
+      const url = this.endpoint(input.target);
+      if (!input.taskId)
+        throw new Error("A2A taskId is required");
+      if (input.action !== "get" && input.action !== "cancel")
+        throw new Error("Invalid A2A task action");
+      const binding = await this.load(bindingKey(input.localScope, url));
+      signal.throwIfAborted();
+      const result = await (input.action === "get" ? this.invoker.getTask(url, input.taskId, signal) : this.invoker.cancelTask(url, input.taskId, signal));
+      this.check(result, input.taskId, binding.taskId === input.taskId ? binding.contextId : undefined);
       return result;
     });
   }
-  async withLock(key, signal, work) {
-    const previous = this.tails.get(key) ?? Promise.resolve();
-    let release;
-    const current = new Promise((resolve) => {
-      release = resolve;
+  invoke(input) {
+    const details = { submissionAttempted: false };
+    return this.operation(input.signal, details, async (signal, deadline) => {
+      const url = this.endpoint(input.target);
+      if (typeof input.message === "string" && !input.message.trim())
+        throw new Error("A2A message is required");
+      const message = typeof input.message === "string" ? {
+        messageId: randomUUID2(),
+        role: Role.ROLE_USER,
+        contextId: "",
+        taskId: "",
+        metadata: undefined,
+        extensions: [],
+        referenceTaskIds: [],
+        parts: [
+          {
+            content: { $case: "text", value: input.message.trim() },
+            mediaType: "text/plain",
+            filename: "",
+            metadata: undefined
+          }
+        ]
+      } : {
+        ...input.message,
+        messageId: input.message.messageId || randomUUID2()
+      };
+      if (input.contextId && message.contextId && input.contextId !== message.contextId || input.taskId && message.taskId && input.taskId !== message.taskId)
+        throw new Error("Conflicting explicit A2A message identity");
+      const explicitContext = input.contextId || message.contextId || undefined;
+      const taskId = input.taskId || message.taskId || undefined;
+      if (input.newContext && (explicitContext || taskId))
+        throw new Error("new_context cannot be combined with context_id or task_id");
+      const key = bindingKey(input.localScope, url);
+      return this.contexts.withLock(key, signal, async () => {
+        const binding = await this.load(key);
+        this.requireReadback(binding);
+        if (!binding.contextId && !explicitContext && !input.newContext) {
+          const legacy = await this.contexts.get(`${input.localScope}/${input.target}`);
+          if (legacy)
+            throw new A2AInvocationError(`Legacy A2A context ${JSON.stringify(legacy)} has no endpoint identity. Supply context_id explicitly to migrate it, or new_context to start independently; the legacy entry is preserved.`);
+        }
+        let contextId = explicitContext ?? (input.newContext ? undefined : binding.contextId);
+        if (taskId) {
+          signal.throwIfAborted();
+          const found = await this.invoker.getTask(url, taskId, signal);
+          this.check(found, taskId, contextId);
+          contextId = found.contextId;
+        }
+        if (contextId) {
+          return this.contexts.withLock(executionKey(url, contextId), signal, () => this.send(message, url, key, contextId, taskId, signal, details, binding, deadline));
+        }
+        return this.send(message, url, key, undefined, taskId, signal, details, binding, deadline);
+      });
     });
-    const tail = previous.then(() => current);
-    this.tails.set(key, tail);
-    tail.finally(() => {
-      if (this.tails.get(key) === tail)
-        this.tails.delete(key);
-    });
+  }
+  async send(message, url, key, contextId, taskId, signal, details, binding, deadline) {
+    let record = contextId ? await this.load(executionKey(url, contextId)) : {};
+    if (contextId === binding.contextId && (binding.pending && !record.pending || binding.taskId && binding.messageId === record.messageId && (!record.taskId || record.submissionUnknown && !binding.submissionUnknown)))
+      record = binding;
+    this.requireReadback(record);
+    if (record.taskId && !terminal(record.state)) {
+      signal.throwIfAborted();
+      const current = await this.invoker.getTask(url, record.taskId, signal);
+      this.check(current, record.taskId, contextId);
+      record = this.snapshot(current, record.messageId);
+      await this.save(executionKey(url, contextId), record);
+      if (!terminal(record.state) && !(interrupted(record.state) && taskId === record.taskId)) {
+        throw new Error(interrupted(record.state) ? `A2A task ${record.taskId} requires same-task followup; supply task_id.` : `A2A task ${record.taskId} is still working or unresolved; use task get/cancel before sending again.`);
+      }
+    }
+    if (taskId) {
+      signal.throwIfAborted();
+      const current = await this.invoker.getTask(url, taskId, signal);
+      this.check(current, taskId, contextId);
+      if (terminal(current.status?.state))
+        throw new Error(`Cannot continue terminal A2A task ${taskId}`);
+      if (!interrupted(current.status?.state))
+        throw new Error(`A2A task ${taskId} is still working or unresolved`);
+    }
+    const previous = record;
+    record = {
+      contextId,
+      taskId,
+      messageId: message.messageId,
+      pending: true,
+      submissionUnknown: true
+    };
+    details.messageId = message.messageId;
+    await this.save(key, record);
+    if (contextId)
+      await this.save(executionKey(url, contextId), record);
+    let accepted;
+    let releaseContext;
+    let contextLease;
+    let lockedContext = contextId;
+    let persistence = Promise.resolve();
+    let callbacksOpen = true;
+    let acceptanceObserved = false;
+    const writeTask = async (task, acceptance) => {
+      this.check(task, accepted?.id ?? taskId, contextId ?? accepted?.contextId);
+      accepted = task;
+      details.task = task;
+      acceptanceObserved ||= acceptance;
+      record = {
+        ...this.snapshot(task, message.messageId),
+        submissionUnknown: !acceptanceObserved
+      };
+      await this.save(key, record);
+      if (!lockedContext) {
+        let ready;
+        let failed;
+        const acquired = new Promise((resolve, reject) => {
+          ready = resolve;
+          failed = reject;
+        });
+        const hold = new Promise((resolve) => {
+          releaseContext = resolve;
+        });
+        contextLease = this.contexts.withLock(executionKey(url, task.contextId), signal, async () => {
+          lockedContext = task.contextId;
+          ready();
+          await hold;
+        });
+        contextLease.catch(failed);
+        await acquired;
+      }
+      await this.save(executionKey(url, task.contextId), record);
+    };
+    const persistTask = (task, acceptance = false) => {
+      const update = persistence.then(() => writeTask(task, acceptance));
+      persistence = update.catch(() => {
+        return;
+      });
+      return update;
+    };
+    const onTask = (task) => {
+      if (!callbacksOpen)
+        return Promise.reject(new Error("A2A acceptance callback arrived after invocation settlement"));
+      return persistTask(task, true);
+    };
     try {
-      await waitForPreviousCall(previous, signal);
-      return await work();
+      signal.throwIfAborted();
+      details.submissionAttempted = true;
+      const result = await this.invoker.invoke({
+        url,
+        message,
+        contextId,
+        taskId,
+        signal,
+        deadline,
+        onTask
+      });
+      callbacksOpen = false;
+      await persistence;
+      if ("messageId" in result) {
+        if (contextId && result.contextId !== contextId || taskId && result.taskId !== taskId)
+          throw new Error("A2A message response identity mismatch");
+        const completed = {
+          contextId: result.contextId || contextId,
+          pending: false
+        };
+        await this.save(key, completed);
+        if (completed.contextId) {
+          if (lockedContext)
+            await this.save(executionKey(url, completed.contextId), completed);
+          else
+            await this.contexts.withLock(executionKey(url, completed.contextId), signal, () => this.save(executionKey(url, completed.contextId), completed));
+        }
+      } else
+        await persistTask(result, true);
+      return result;
+    } catch (error) {
+      callbacksOpen = false;
+      await persistence;
+      if (error instanceof A2AInvocationError) {
+        if (error.task)
+          await persistTask(error.task);
+        if (error.cancellation)
+          await persistTask(error.cancellation);
+        if (!error.submissionAttempted && !accepted) {
+          await this.save(key, binding);
+          if (contextId)
+            await this.save(executionKey(url, contextId), previous);
+        }
+        const failure = {
+          ...details,
+          submissionAttempted: error.submissionAttempted,
+          messageId: error.messageId ?? details.messageId,
+          task: accepted ?? error.task,
+          cancellation: error.cancellation,
+          cause: error
+        };
+        throw error instanceof A2AInvocationCancelledError ? new A2AInvocationCancelledError(failure) : new A2AInvocationError(error.message, failure);
+      }
+      throw new A2AInvocationError(error instanceof Error ? error.message : "A2A invocation failed", { ...details, cause: error });
     } finally {
-      release();
+      callbacksOpen = false;
+      await persistence;
+      releaseContext?.();
+      await contextLease?.catch(() => {
+        return;
+      });
+    }
+  }
+  endpoint(target) {
+    const route = Object.hasOwn(this.routes, target) ? this.routes[target] : undefined;
+    if (!route)
+      throw new Error(`Unknown A2A target ${JSON.stringify(target)}. Configured targets: ${this.targets().join(", ")}`);
+    const url = new URL(route);
+    if (url.protocol !== "https:" && url.protocol !== "http:")
+      throw new Error("A2A endpoint must use HTTP(S)");
+    if (url.username || url.password)
+      throw new Error("A2A endpoint must not contain credentials");
+    url.hash = "";
+    return url.href;
+  }
+  async load(key) {
+    const value = await this.contexts.get(key);
+    if (value === undefined)
+      return {};
+    const record = JSON.parse(value);
+    if (!record || typeof record !== "object" || Array.isArray(record))
+      throw new Error("Invalid A2A controller record; inspect the context store before retrying");
+    const fields = record;
+    if (["contextId", "taskId", "messageId"].some((name) => fields[name] !== undefined && typeof fields[name] !== "string") || fields.pending !== undefined && typeof fields.pending !== "boolean" || fields.submissionUnknown !== undefined && typeof fields.submissionUnknown !== "boolean" || fields.state !== undefined && (typeof fields.state !== "number" || !Object.values(TaskState).includes(fields.state))) {
+      throw new Error("Invalid A2A controller metadata; inspect the context store before retrying");
+    }
+    return record;
+  }
+  save(key, record) {
+    return this.contexts.set(key, JSON.stringify(record));
+  }
+  requireReadback(record) {
+    if (record.submissionUnknown || record.pending && (!record.taskId || record.state === undefined)) {
+      throw new A2AInvocationError(`Unknown A2A submission ${record.messageId ?? "(missing message ID)"}${record.taskId ? ` for task ${record.taskId}` : " has no task readback ID"}. Do not retry automatically or erase it with new_context. An unchanged task state does not acknowledge this message. Have the peer/operator correlate this exact message ID and explicitly reconcile the controller record before retrying.`, { submissionAttempted: false, messageId: record.messageId });
+    }
+  }
+  snapshot(task, messageId) {
+    return {
+      contextId: task.contextId,
+      taskId: task.id,
+      state: task.status?.state,
+      messageId,
+      pending: !terminal(task.status?.state)
+    };
+  }
+  check(task, taskId, contextId) {
+    if (!task.id || !task.contextId || taskId && task.id !== taskId || contextId && task.contextId !== contextId) {
+      throw new Error("A2A task/context identity mismatch in remote readback");
+    }
+  }
+  async operation(caller, details, work) {
+    const deadline = performance.now() + this.timeoutMs;
+    const controller = new AbortController;
+    const relay = () => controller.abort(caller?.aborted ? caller.reason : this.closed.signal.reason);
+    const sources = [caller, this.closed.signal].filter((s) => !!s);
+    for (const source of sources) {
+      source.addEventListener("abort", relay, { once: true });
+      if (source.aborted)
+        relay();
+    }
+    const timer = setTimeout(() => controller.abort(new Error("A2A operation timed out")), this.timeoutMs);
+    let abort;
+    const canceled = new Promise((_, reject) => {
+      abort = () => {
+        const context = {
+          submissionAttempted: false,
+          ...details,
+          cause: controller.signal.reason
+        };
+        reject(caller?.aborted || this.closed.signal.aborted ? new A2AInvocationCancelledError(context) : new A2AInvocationError("A2A operation timed out", context));
+      };
+      controller.signal.addEventListener("abort", abort, { once: true });
+      if (controller.signal.aborted)
+        abort();
+    });
+    const pending = Promise.resolve().then(() => {
+      controller.signal.throwIfAborted();
+      return work(controller.signal, deadline);
+    });
+    if (caller) {
+      const owned = this.owners.get(caller) ?? new Set;
+      this.owners.set(caller, owned);
+      owned.add(pending);
+      const settled = () => {
+        owned.delete(pending);
+        if (owned.size === 0)
+          this.owners.delete(caller);
+      };
+      pending.then(settled, settled);
+    }
+    try {
+      return await Promise.race([canceled, pending]);
+    } finally {
+      clearTimeout(timer);
+      controller.signal.removeEventListener("abort", abort);
+      for (const source of sources)
+        source.removeEventListener("abort", relay);
     }
   }
 }
-function waitForPreviousCall(previous, signal) {
-  if (signal.aborted)
-    return Promise.reject(new A2AInvocationCancelledError);
-  return new Promise((resolve, reject) => {
-    const onAbort = () => {
-      signal.removeEventListener("abort", onAbort);
-      reject(new A2AInvocationCancelledError);
+
+// src/index.ts
+function createA2AClient(options) {
+  const { routes } = parseConfig({ routes: options.routes }, ".");
+  const timeoutMs = positiveInteger(options.timeoutMs ?? 120000, "timeoutMs");
+  const pollIntervalMs = positiveInteger(options.pollIntervalMs ?? 500, "pollIntervalMs");
+  const cancelTimeoutMs = positiveInteger(options.cancelTimeoutMs ?? 5000, "cancelTimeoutMs");
+  return new A2AToolService(routes, new PollingA2AInvoker(createOfficialClientProvider(), {
+    timeoutMs,
+    pollIntervalMs,
+    cancelTimeoutMs
+  }), options.contextStore ?? new MemoryContextStore, { timeoutMs });
+}
+function positiveInteger(value, name) {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > 2147483647) {
+    throw new Error(`${name} must be a positive timer-safe integer`);
+  }
+  return value;
+}
+
+// src/tool-operations.ts
+var stringSchema = { type: "string", minLength: 1 };
+var A2A_TOOL_DEFINITIONS = [
+  {
+    name: "a2a_invoke",
+    description: "Send a message to a configured remote A2A agent. Reuses this conversation's remote context; use task_id for same-task followup. Working or interrupted results can be inspected with a2a_task.",
+    parameters: {
+      type: "object",
+      properties: {
+        target: stringSchema,
+        message: stringSchema,
+        context_id: stringSchema,
+        task_id: stringSchema,
+        new_context: { type: "boolean" }
+      },
+      required: ["target", "message"],
+      additionalProperties: false
+    },
+    requiresApproval: true,
+    parallelSafe: false
+  },
+  {
+    name: "a2a_task",
+    description: "Read or request cancellation of a known remote A2A task. Cancellation is confirmed only when the returned state is canceled.",
+    parameters: {
+      type: "object",
+      properties: {
+        target: stringSchema,
+        task_id: stringSchema,
+        action: { type: "string", enum: ["get", "cancel"] }
+      },
+      required: ["target", "task_id", "action"],
+      additionalProperties: false
+    },
+    requiresApproval: true,
+    parallelSafe: false
+  }
+];
+function getA2AToolDefinitions(client) {
+  const targets = [...client.targets()].sort();
+  return A2A_TOOL_DEFINITIONS.map((definition) => ({
+    ...definition,
+    description: `${definition.description} Configured targets: ${targets.join(", ") || "none configured"}.`,
+    parameters: {
+      ...definition.parameters,
+      properties: {
+        ...definition.parameters.properties,
+        target: {
+          ...stringSchema,
+          ...targets.length ? { enum: targets } : {}
+        }
+      }
+    }
+  }));
+}
+
+class ArgumentError extends Error {
+}
+function requiredString(value, name) {
+  if (typeof value !== "string" || !value.trim())
+    throw new ArgumentError(`${name} must be a non-empty string`);
+  return value;
+}
+function optionalString(args, name) {
+  return Object.hasOwn(args, name) ? requiredString(args[name], name) : undefined;
+}
+function resolveA2AScope(getScope) {
+  const scope = getScope();
+  const agent = requiredString(scope?.agentId, "Trusted agentId (session must be ready)");
+  const conversation = requiredString(scope?.conversationId, "Trusted conversationId (session must be ready)");
+  if (agent.includes("/") || conversation.includes("/"))
+    throw new ArgumentError("Trusted scope IDs must not contain slashes");
+  return `${agent}/${conversation}`;
+}
+function readA2AArguments(name, value) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new ArgumentError("Arguments must be an object");
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null)
+    throw new ArgumentError("Arguments must be a plain object");
+  const args = value;
+  const allowed = name === "a2a_invoke" ? ["target", "message", "context_id", "task_id", "new_context"] : ["target", "task_id", "action"];
+  if (Reflect.ownKeys(args).some((key) => typeof key !== "string" || !allowed.includes(key)))
+    throw new ArgumentError("Unknown A2A argument; scope and identity are host-owned");
+  const target = requiredString(args.target, "target");
+  if (name === "a2a_task") {
+    const taskId = requiredString(args.task_id, "task_id");
+    if (args.action !== "get" && args.action !== "cancel")
+      throw new ArgumentError("action must be get or cancel");
+    const action = args.action;
+    return { kind: "task", target, taskId, action };
+  }
+  const message = requiredString(args.message, "message");
+  const contextId = optionalString(args, "context_id");
+  const taskId = optionalString(args, "task_id");
+  if (Object.hasOwn(args, "new_context") && typeof args.new_context !== "boolean")
+    throw new ArgumentError("new_context must be a boolean");
+  const newContext = args.new_context;
+  if (newContext && (contextId || taskId))
+    throw new ArgumentError("new_context cannot be combined with context_id or task_id");
+  return {
+    kind: "invoke",
+    target,
+    message,
+    contextId,
+    taskId,
+    newContext
+  };
+}
+var states = {
+  [TaskState.TASK_STATE_UNSPECIFIED]: "unspecified",
+  [TaskState.TASK_STATE_SUBMITTED]: "submitted",
+  [TaskState.TASK_STATE_WORKING]: "working",
+  [TaskState.TASK_STATE_COMPLETED]: "completed",
+  [TaskState.TASK_STATE_FAILED]: "failed",
+  [TaskState.TASK_STATE_CANCELED]: "canceled",
+  [TaskState.TASK_STATE_INPUT_REQUIRED]: "input-required",
+  [TaskState.TASK_STATE_REJECTED]: "rejected",
+  [TaskState.TASK_STATE_AUTH_REQUIRED]: "auth-required"
+};
+var stateName = (task) => states[task.status?.state ?? 0] ?? "unknown";
+var failed = (task) => ["failed", "canceled", "rejected"].includes(stateName(task));
+var clip = (text, limit) => text.length <= limit ? text : `${text.slice(0, limit)}…[truncated ${text.length - limit} chars]`;
+function dataSummary(value) {
+  if (value === null)
+    return { type: "null" };
+  if (Array.isArray(value))
+    return { type: "array", items: value.length, valuesOmitted: true };
+  if (typeof value === "object")
+    return {
+      type: "object",
+      properties: Object.keys(value).length,
+      valuesOmitted: true
     };
-    signal.addEventListener("abort", onAbort, { once: true });
-    previous.then(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, (error) => {
-      signal.removeEventListener("abort", onAbort);
-      reject(error);
+  return {
+    type: typeof value,
+    ...typeof value === "string" ? { characters: value.length } : {},
+    valueOmitted: true
+  };
+}
+function dataPreview(value, limit) {
+  let nodes = 0;
+  function visit(item, depth) {
+    if (++nodes > 40)
+      return "[omitted: preview node budget]";
+    if (item === null || typeof item === "boolean")
+      return item;
+    if (typeof item === "number")
+      return Number.isFinite(item) ? item : "[omitted: non-JSON number]";
+    if (typeof item === "string")
+      return "[omitted: unclassified string value]";
+    if (depth >= 3)
+      return "[omitted: preview depth limit]";
+    if (Array.isArray(item)) {
+      const preview = item.slice(0, 8).map((entry) => visit(entry, depth + 1));
+      if (item.length > 8)
+        preview.push(`[omitted: ${item.length - 8} array items]`);
+      return preview;
+    }
+    if (item && typeof item === "object" && (Object.getPrototypeOf(item) === Object.prototype || Object.getPrototypeOf(item) === null)) {
+      const entries = Object.entries(item);
+      const preview = {};
+      let omitted = Math.max(0, entries.length - 8);
+      for (const [key, entry] of entries.slice(0, 8)) {
+        if (["__proto__", "constructor", "prototype"].includes(key) || !/^[A-Za-z_][A-Za-z0-9_-]{0,47}$/.test(key) || /secret|password|token|auth|credential|cookie|header|metadata|reason|thought|base64|raw|private|key/i.test(key)) {
+          omitted++;
+          continue;
+        }
+        preview[key] = visit(entry, depth + 1);
+      }
+      if (omitted)
+        preview.$omittedProperties = omitted;
+      return preview;
+    }
+    return "[omitted: non-JSON value]";
+  }
+  const preview = visit(value, 0);
+  return JSON.stringify(preview).length <= Math.min(limit, 1000) ? { preview } : { previewOmitted: "JSON preview exceeds size budget" };
+}
+function fileUrl(value, limit) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:")
+      return "[URL omitted: non-HTTP scheme]";
+    url.username = "";
+    url.password = "";
+    return clip(url.toString(), limit);
+  } catch {
+    return "[URL omitted: invalid URL]";
+  }
+}
+function previewParts(parts, limit, count) {
+  return {
+    parts: parts.slice(0, count).map((part) => {
+      const common = {
+        filename: clip(part.filename, limit),
+        mediaType: clip(part.mediaType, limit)
+      };
+      const content = part.content;
+      switch (content?.$case) {
+        case "text":
+          return { type: "text", text: clip(content.value, limit) };
+        case "data":
+          return {
+            type: "data",
+            ...common,
+            summary: dataSummary(content.value),
+            ...dataPreview(content.value, limit)
+          };
+        case "raw":
+          return {
+            type: "file",
+            ...common,
+            byteCount: content.value.byteLength,
+            bytesOmitted: true
+          };
+        case "url":
+          return {
+            type: "file",
+            ...common,
+            url: fileUrl(content.value, limit)
+          };
+        default:
+          return { type: "unknown", contentOmitted: true };
+      }
+    }),
+    ...parts.length > count ? { omittedParts: parts.length - count } : {}
+  };
+}
+function previewMessage(message, limit, count) {
+  return {
+    messageId: clip(message.messageId, limit),
+    text: clip(message.parts.slice(0, count).flatMap((part) => part.content?.$case === "text" ? [part.content.value.slice(0, limit + 1)] : []).join(`
+`), limit),
+    ...previewParts(message.parts, limit, count)
+  };
+}
+function projection(target, result, limit, count) {
+  if (!("id" in result))
+    return {
+      target: clip(target, limit),
+      status: "message",
+      taskId: clip(result.taskId, limit),
+      contextId: clip(result.contextId, limit),
+      ...previewMessage(result, limit, count)
+    };
+  return {
+    target: clip(target, limit),
+    status: stateName(result),
+    taskId: clip(result.id, limit),
+    contextId: clip(result.contextId, limit),
+    text: clip(result.artifacts.slice(0, count).flatMap((artifact) => artifact.parts.slice(0, count).flatMap((part) => part.content?.$case === "text" ? [part.content.value.slice(0, limit + 1)] : [])).join(`
+`), limit),
+    ...result.status?.message ? { statusMessage: previewMessage(result.status.message, limit, count) } : {},
+    artifacts: result.artifacts.slice(0, count).map((artifact) => ({
+      artifactId: clip(artifact.artifactId, limit),
+      name: clip(artifact.name, limit),
+      ...previewParts(artifact.parts, limit, count)
+    })),
+    ...result.artifacts.length > count ? { omittedArtifacts: result.artifacts.length - count } : {},
+    ...result.history.length ? { omittedHistoryMessages: result.history.length } : {}
+  };
+}
+function projectA2AResult(target, result) {
+  return {
+    content: boundedProjection(target, result),
+    isError: "id" in result && failed(result)
+  };
+}
+function boundedProjection(target, result, extra = {}) {
+  for (const [limit, count] of [
+    [2000, 12],
+    [800, 8],
+    [300, 4],
+    [100, 2]
+  ]) {
+    const content = JSON.stringify({
+      ...result ? projection(target, result, limit, count) : { target: clip(target, limit), status: "error" },
+      ...Object.fromEntries(Object.entries(extra).map(([key, value]) => [
+        key,
+        typeof value === "string" ? clip(value, limit) : value
+      ]))
     });
+    if (content.length <= 16000)
+      return content;
+  }
+  return JSON.stringify({
+    target: clip(target, 100),
+    status: "error",
+    contentOmitted: true,
+    error: "Projection exceeded output budget"
   });
+}
+async function runA2ATool(name, args, options) {
+  let target = "";
+  let action;
+  let readback = {};
+  try {
+    const input = readA2AArguments(name, args);
+    target = input.target;
+    readback = {
+      taskId: input.taskId,
+      contextId: input.kind === "invoke" ? input.contextId : undefined
+    };
+    const localScope = resolveA2AScope(options.getScope);
+    if (options.signal.aborted)
+      throw new ArgumentError("A2A tool owner is closed or canceled; no new submission attempted");
+    if (input.kind === "task") {
+      action = input.action;
+      const result = await options.client.task({
+        target,
+        taskId: input.taskId,
+        action,
+        localScope,
+        signal: options.signal
+      });
+      return {
+        content: boundedProjection(target, result, action === "cancel" ? {
+          cancellation: stateName(result) === "canceled" ? "confirmed" : "requested-not-confirmed"
+        } : {}),
+        isError: failed(result)
+      };
+    }
+    const result = await options.client.invoke({
+      target,
+      message: input.message,
+      contextId: input.contextId,
+      taskId: input.taskId,
+      newContext: input.newContext,
+      localScope,
+      signal: options.signal
+    });
+    return projectA2AResult(target, result);
+  } catch (error) {
+    if (error instanceof A2AInvocationError) {
+      return {
+        isError: true,
+        content: boundedProjection(target, error.task, {
+          ...!error.task ? readback : {},
+          error: clip(error.message, 2000),
+          submissionAttempted: error.submissionAttempted,
+          ...error.messageId ? { messageId: clip(error.messageId, 300) } : {},
+          ...error.cancellation ? {
+            cancellation: stateName(error.cancellation) === "canceled" ? "confirmed" : "requested-not-confirmed",
+            cancellationTaskId: clip(error.cancellation.id, 300),
+            cancellationContextId: clip(error.cancellation.contextId, 300),
+            cancellationStatus: stateName(error.cancellation)
+          } : { cancellation: "not-confirmed" }
+        })
+      };
+    }
+    return {
+      isError: true,
+      content: boundedProjection(target, undefined, {
+        ...readback,
+        error: error instanceof ArgumentError ? clip(error.message, 2000) : "A2A operation failed; inspect the known task before retrying",
+        ...action === "cancel" ? { cancellation: "not-confirmed" } : {}
+      })
+    };
+  }
+}
+
+// src/mod-controller.ts
+class A2AModController {
+  client;
+  constructor(client) {
+    this.client = client;
+  }
+  async run(name, context) {
+    const result = await runA2ATool(name, context.args, {
+      client: this.client,
+      getScope: () => ({
+        agentId: context.agent.id,
+        conversationId: context.conversation.id
+      }),
+      signal: context.signal
+    });
+    return result.isError ? { status: "error", content: result.content } : result.content;
+  }
+  targets() {
+    return this.client.targets();
+  }
 }
 
 // mods/a2a-client.ts
 function activate(letta) {
   if (!letta.capabilities.tools)
     return;
+  const owner = new AbortController;
+  let client;
   let controller;
   let configurationError;
   try {
     const config = loadConfig();
-    controller = new A2AModController(config, new A2AToolService(config.routes, new PollingA2AInvoker(createOfficialClientProvider(), config), new FileContextStore(config.contextStorePath)));
+    client = createA2AClient({
+      routes: config.routes,
+      timeoutMs: config.timeoutMs,
+      pollIntervalMs: config.pollIntervalMs,
+      contextStore: new FileContextStore(config.contextStorePath)
+    });
+    controller = new A2AModController(client);
   } catch (error) {
-    configurationError = error instanceof Error ? error.message : String(error);
+    configurationError = error instanceof Error ? error.message : "Invalid A2A configuration";
     letta.diagnostics.report({
-      message: `a2a_invoke unavailable: ${configurationError}`,
+      message: `A2A tools unavailable: ${configurationError}`,
       severity: "error"
     });
   }
-  const targets = controller?.targets().join(", ") ?? "none configured";
-  return letta.tools.register({
-    name: "a2a_invoke",
-    description: `Call a configured remote A2A agent and return its final text result. ` + `Remote context is reused automatically for this Letta conversation and target. ` + `Configured targets: ${targets}.`,
-    parameters: {
-      type: "object",
-      properties: {
-        target: {
-          type: "string",
-          description: "Configured A2A target name."
-        },
-        message: {
-          type: "string",
-          description: "Complete task or question to send to the remote agent."
-        },
-        context_id: {
-          type: "string",
-          description: "Optional explicit remote A2A context ID. Usually omit this and let the mod preserve continuity."
-        },
-        new_context: {
-          type: "boolean",
-          description: "Start a fresh remote A2A context instead of continuing the saved one."
-        }
-      },
-      required: ["target", "message"],
-      additionalProperties: false
-    },
-    requiresApproval: false,
-    parallelSafe: false,
-    async run(context) {
-      if (!controller) {
-        return {
-          status: "error",
-          content: configurationError ?? "A2A client is not configured"
-        };
+  const unregister = [];
+  let closed = false;
+  const cleanup = () => {
+    if (closed)
+      return;
+    closed = true;
+    owner.abort();
+    client?.close();
+    for (const remove of unregister.reverse()) {
+      try {
+        remove();
+      } catch {
+        letta.diagnostics.report({
+          message: "Failed to unregister an A2A tool",
+          severity: "error"
+        });
       }
-      return controller.run(context);
     }
-  });
+  };
+  try {
+    for (const definition of getA2AToolDefinitions(client ?? { targets: () => [] })) {
+      unregister.push(letta.tools.register({
+        ...definition,
+        async run(context) {
+          if (!controller)
+            return {
+              status: "error",
+              content: configurationError ?? "A2A client is not configured"
+            };
+          return controller.run(definition.name, {
+            ...context,
+            signal: AbortSignal.any([owner.signal, context.signal])
+          });
+        }
+      }));
+    }
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+  return cleanup;
 }
 export {
   activate as default

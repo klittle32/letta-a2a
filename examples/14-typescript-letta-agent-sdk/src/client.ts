@@ -1,16 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import {
-  type Message,
-  Role,
-  TaskState,
-} from "@a2a-js/sdk";
-import {
-  ClientFactory,
-  JsonRpcTransportFactory,
-} from "@a2a-js/sdk/client";
+import { type Message, Role, TaskState } from "@a2a-js/sdk";
+import { createA2AClient } from "letta-a2a-client";
 
-import { readText, textPart } from "./a2a-text.js";
+import { readText, textPart } from "letta-a2a-bridge";
 
 const { contextId, text } = parseArguments(process.argv.slice(2));
 const baseUrl = (process.env.A2A_BASE_URL ?? "http://127.0.0.1:41241").replace(
@@ -18,9 +11,9 @@ const baseUrl = (process.env.A2A_BASE_URL ?? "http://127.0.0.1:41241").replace(
   "",
 );
 
-const client = await new ClientFactory({
-  transports: [new JsonRpcTransportFactory()],
-}).createFromUrl(baseUrl);
+const outbound = createA2AClient({ routes: { bridge: baseUrl } });
+const signal = AbortSignal.timeout(120_000);
+const client = await outbound.connect("bridge", signal);
 
 const message: Message = {
   role: Role.ROLE_USER,
@@ -38,16 +31,19 @@ let observedTaskId: string | undefined;
 let wroteText = false;
 let responseLineClosed = false;
 
-for await (const response of client.sendMessageStream({
-  tenant: "",
-  message,
-  configuration: {
-    acceptedOutputModes: ["text/plain"],
-    taskPushNotificationConfig: undefined,
-    returnImmediately: false,
+for await (const response of client.sendMessageStream(
+  {
+    tenant: "",
+    message,
+    configuration: {
+      acceptedOutputModes: ["text/plain"],
+      taskPushNotificationConfig: undefined,
+      returnImmediately: false,
+    },
+    metadata: undefined,
   },
-  metadata: undefined,
-})) {
+  { signal },
+)) {
   const payload = response.payload;
   if (!payload) continue;
 
@@ -87,6 +83,7 @@ for await (const response of client.sendMessageStream({
 if (wroteText && !responseLineClosed) process.stdout.write("\n");
 console.log(`taskId=${observedTaskId ?? "(none)"}`);
 console.log(`contextId=${observedContextId ?? "(none)"}`);
+outbound.close();
 
 function parseArguments(args: string[]): {
   contextId?: string;

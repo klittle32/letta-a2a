@@ -6,9 +6,10 @@ Use the official JavaScript/TypeScript SDKs on both sides of one small adapter:
 
 - `@a2a-js/sdk` owns the A2A 1.0 client, server, task store, and wire protocol.
 - `@letta-ai/letta-agent-sdk` owns the persistent Letta agent, conversations, sessions, turns, and cancellation.
-- `LettaAgentExecutor` translates between their lifecycle events.
+- [`letta-a2a-bridge`](../../packages/letta-a2a-bridge/) packages the executor, SDK turn runner, strict text helpers, and loopback composition. The example supplies configuration and agent setup.
+- [`letta-a2a-client`](../../packages/letta-a2a-client/) supplies the policy-bound client and session-owned outbound tools; no global mod is needed for SDK-to-SDK delegation.
 
-No Rust binary, MCP server, gateway, OAuth fixture, or A2A 0.3 compatibility layer is involved. The optional outbound client mod remains a separate package so the inbound server has a clear process boundary.
+No Rust binary, MCP server, gateway, OAuth fixture, or A2A 0.3 compatibility layer is involved. The inbound bridge remains a separate process from ordinary Letta Code sessions.
 
 ## Message flow
 
@@ -25,11 +26,10 @@ The runnable source is deliberately split by responsibility:
 | File | Responsibility |
 | --- | --- |
 | [`client.ts`](src/client.ts) | Discover the Agent Card and send a streaming A2A 1.0 message. |
-| [`server.ts`](src/server.ts) | Compose the official A2A request handler, task store, and Express transport. |
-| [`letta-agent-executor.ts`](src/letta-agent-executor.ts) | Translate A2A tasks, statuses, artifacts, failures, and cancellation. |
-| [`letta-agent.ts`](src/letta-agent.ts) | Run Letta SDK sessions and map A2A contexts to Letta conversations. |
-| [`agent-card.ts`](src/agent-card.ts) | Advertise one A2A 1.0 JSON-RPC interface. |
-| [`a2a-text.ts`](src/a2a-text.ts) | Convert the text-only message parts used by this example. |
+| [`server.ts`](src/server.ts) | Supply the Letta client, existing agent binding, fixture policy, and startup/shutdown wiring to the bridge package. |
+| [`letta-agent.ts`](src/letta-agent.ts) | Explicitly create or reuse the demonstration agent. |
+| [`tool-policy.ts`](src/tool-policy.ts) | Keep the dedicated tool-free agent guard and select the package's noninteractive tool policy. |
+| [`config.ts`](src/config.ts) | Read example environment configuration. |
 
 ## Run it
 
@@ -38,8 +38,13 @@ This example runs independently from the repository's Docker lab. It requires No
 Start the server:
 
 ```bash
+# From the repository root, build the local file dependency first.
+(cd packages/letta-a2a-bridge && bun install --frozen-lockfile && bun run build)
+(cd packages/letta-a2a-client && bun install --frozen-lockfile && bun run build)
 cd examples/14-typescript-letta-agent-sdk
 bun install --frozen-lockfile
+bun run check
+bun test tests
 
 export OPENAI_API_KEY='<your key>'
 export A2A_LETTA_MODEL='openai/gpt-4.1-nano'
@@ -47,6 +52,8 @@ bun run start
 ```
 
 The Letta Agent SDK starts and owns a local App Server subprocess. On the first run, the example creates a local agent named `A2A TypeScript Example Agent`. Later runs reuse that exact agent.
+
+After rebuilding either package during development, refresh this example's installed file-dependency copies with `bun install --frozen-lockfile --force`.
 
 To expose an existing local agent instead, set its ID before starting:
 
@@ -76,9 +83,22 @@ bun run ask -- --context '<context ID>' \
   'What codeword did I ask you to remember? Reply with only the codeword.'
 ```
 
-## Add outbound A2A to Letta Code
+## Add outbound A2A to the SDK agent
 
-The repository's [`letta-a2a-client`](../../packages/letta-a2a-client/) package gives ordinary local Letta Code sessions an `a2a_invoke` mod tool. It uses the official TypeScript A2A client; no Rust CLI or skill is required.
+Start a second Example 14 server on another port. On the caller server, provide named routes before startup:
+
+```bash
+export A2A_REMOTE_ROUTES='{"peer":"http://127.0.0.1:41242"}'
+bun run start
+```
+
+Ask the caller to use `a2a_invoke` with target `peer`. The caller's SDK session registers `a2a_invoke` and `a2a_task` directly. Each fresh session binds its actual ready conversation, uses the bridge turn's cancellation signal, and disposes its tools explicitly. Continuity metadata is stored under the configured working directory at `.letta/a2a-client-contexts.json`.
+
+SDK mode is the default. Without `A2A_REMOTE_ROUTES`, it exposes no outbound tools. To explicitly exercise the installed mod instead, set `A2A_CLIENT_ADAPTER=mod` and use the mod configuration below; do not also set SDK routes. The fixture policy allows only the two A2A tools and denies all others.
+
+## Add outbound A2A to ordinary Letta Code
+
+The same package supplies the two tools as a Letta Code mod, with host approval required. No Rust CLI or skill is required.
 
 With this Example 14 server still running, configure and install the mod:
 
@@ -127,20 +147,18 @@ contextId=<same context ID>
 
 ## Watch it happen
 
-Keep the server terminal visible. It prints the persistent Letta agent ID, discovery URL, and each A2A task transition:
+Keep the server terminal visible. It prints the persistent Letta agent ID and discovery URL:
 
 ```text
 Letta agent: agent-local-...
 Agent Card: http://127.0.0.1:41241/.well-known/agent-card.json
-[a2a] task=... context=... started
-[a2a] task=... state=TASK_STATE_COMPLETED
 ```
 
 The client terminal prints streamed public assistant text, task states, and the IDs needed for continuation.
 
 ## What the controller is doing
 
-[`LettaAgentExecutor`](src/letta-agent-executor.ts) is intentionally the center of the example. Its `execute()` method performs five visible translations:
+The package's [`LettaAgentExecutor`](../../packages/letta-a2a-bridge/src/letta-agent-executor.ts) implements the translation. Its `execute()` method performs five visible translations:
 
 1. Publish the A2A `submitted` task snapshot and `working` status.
 2. Extract text from the incoming A2A message.
@@ -150,7 +168,7 @@ The client terminal prints streamed public assistant text, task states, and the 
 
 `cancelTask()` aborts the task's `AbortController`. The signal either removes a queued turn before it starts or calls `session.abort()` on the active Letta SDK session. The executor—not the cancellation callback—publishes the final A2A state, avoiding competing terminal events.
 
-[`AgentSdkTurnRunner`](src/letta-agent.ts) keeps protocol identity separate from agent identity:
+[`AgentSdkTurnRunner`](../../packages/letta-a2a-bridge/src/letta-agent.ts) keeps protocol identity separate from agent identity:
 
 ```text
 A2A contextId ──in-memory mapping──▶ Letta conversationId
@@ -162,8 +180,11 @@ A fresh SDK session is opened and closed for each turn. Closing the SDK session 
 ## Boundaries
 
 - A2A 1.0 JSON-RPC and text parts only. No v0.3 imports or compatibility flags.
-- Loopback HTTP with no authentication. Add a gateway or middleware before exposing it beyond the local machine.
+- Loopback HTTP with no authentication, one shared local trust domain. This Phase 1 profile rejects tenant/authenticated execution; a gateway alone does not add authorized context mapping. Do not expose it beyond the local machine.
 - A2A tasks and the context-to-conversation map are in memory. Restarting the server loses both mappings, while the underlying Letta agent and conversations remain persisted.
 - One turn runs at a time per A2A context. Different contexts may run concurrently.
-- Noninteractive SDK sessions stay in strict mode, request no base client toolset, and allowlist only `a2a_invoke`. A deterministic SDK permission callback approves that tool and denies every other approval request. Named or explicitly selected reused agents must also have no persisted tools or startup fails closed. When the outbound mod is installed but misconfigured, `a2a_invoke` remains visible and returns the configuration error; without the mod, it is absent.
-- Push notifications, REST, gRPC, binary parts, and durable task storage are intentionally out of scope.
+- Noninteractive SDK sessions stay in strict mode, request no base client toolset, and allow only the configured A2A tools. Their deterministic permission callback denies everything else. Reused agents must also have no persisted tools or startup fails closed. SDK mode needs explicit outbound routes; mod mode uses the separately installed/configured mod.
+- Push notifications, REST, gRPC, binary parts, interrupted same-task continuation, and durable task storage are intentionally out of scope. Context continuation is a new task in the same conversation, not resuming an interrupted task.
+- Use only one execution-owning runner/process per binding. This extraction provides no cross-process lease or restart recovery.
+- Shutdown is awaitable and bounded (five seconds by default). An incomplete close is reported without pretending the SDK stopped or releasing an active context barrier. Missing/unsuccessful results, unresolved approval, and failed disposal quarantine the context pending manual reconciliation. See the [package profile and lifecycle contract](../../packages/letta-a2a-bridge/README.md).
+- Executed checks and limitations are recorded in the [Phase 0/1 checkpoint](../../docs/evidence/2026-09-11-a2a-packages-phase-0-1.md) and [Phase 2 checkpoint](../../docs/evidence/2026-09-11-a2a-packages-phase-2.md). Ordinary deterministic tests do not repeat provider calls.

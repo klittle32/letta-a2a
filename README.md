@@ -6,6 +6,8 @@ The seven-service core and two Example 12 services run in Docker on one host. Th
 
 The completed proof and limits are summarized in [`docs/CONCLUSIONS.md`](docs/CONCLUSIONS.md). The numbered demonstrations and implementation roadmap live in [`examples/README.md`](examples/README.md).
 
+Reusable bidirectional packages are now being extracted from the lab. The [package plan](docs/LETTA_A2A_PACKAGES_PLAN.md) defines the target; the [implementation contracts](docs/LETTA_A2A_CONTRACTS.md) pin the protocol/SDK baseline and distinguish current behavior from pending release gates.
+
 ## Architecture
 
 ```text
@@ -101,6 +103,9 @@ Implemented examples are complete through Example 14. Examples 06–08 retain ex
 
 ```bash
 bun install --frozen-lockfile
+(cd packages/letta-a2a-client && bun install --frozen-lockfile && bun run check)
+(cd packages/letta-a2a-bridge && bun install --frozen-lockfile && bun run check && bun run build)
+(cd examples/14-typescript-letta-agent-sdk && bun install --frozen-lockfile && bun run check)
 (cd services/reference-agent && uv sync --frozen)
 (cd services/google-adk-agent && uv sync --frozen)
 bun test
@@ -109,6 +114,8 @@ bun run check
 bun run build
 bun run test:compose
 ```
+
+Build the bridge before installing Example 14's local file dependency. After rebuilding an already-installed bridge, refresh the example's copy with `bun install --frozen-lockfile --force` in its directory. The bridge's `check` includes both source and test type-checking; root `bun test` discovers the lab, package, and example tests.
 
 Unit tests cover configuration and gateway-route validation, OAuth issuance and token caching, protocol text mapping, safe Letta stream projection, ordered artifact publication, push registration and delivery policy, duplicate-safe callback receipt, durable A2A-context mappings, Agent Card construction, delegation hop policy, both outbound A2A client paths, and the reference agent's deterministic command surface.
 
@@ -132,7 +139,7 @@ Example 13 is intentionally just installation instructions plus a small skill th
 
 Example 14 is an intentionally small TypeScript composition of the official A2A client/server and Letta Agent SDK. It demonstrates the `AgentExecutor` boundary directly without requiring Rust, Docker, agentgateway, OAuth, or A2A 0.3 compatibility. See [`examples/14-typescript-letta-agent-sdk/`](examples/14-typescript-letta-agent-sdk/).
 
-The optional [`letta-a2a-client`](packages/letta-a2a-client/) packaged mod provides the complementary outbound path for ordinary local Letta Code sessions. It registers one `a2a_invoke` tool backed by the official TypeScript A2A client; agentgateway and OAuth remain deferred.
+[`letta-a2a-client`](packages/letta-a2a-client/) now supplies a lossless typed client library and shared `a2a_invoke`/`a2a_task` tools through a Letta Code mod or session-owned Agent SDK adapter. Example 14 consumes both packages, including SDK-to-SDK delegation without a global mod. Client gateway/OAuth policy and broader bridge capabilities remain later plan work.
 
 The Example 12 provider-free check uses its real ADK/A2A containers with a fake model and a dedicated Hermes OAuth identity, but does not start Hermes. Its opt-in live check invokes the stock Hermes `a2a_call` tool twice against a live ADK model and verifies Hermes audit plus gateway/ADK correlation. The interactive TUI walkthrough remains under [`examples/12-hermes-tui-to-google-adk/`](examples/12-hermes-tui-to-google-adk/).
 

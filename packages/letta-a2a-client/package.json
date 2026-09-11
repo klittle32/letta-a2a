@@ -3,6 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/lib/index.d.ts",
+      "import": "./dist/lib/index.js"
+    },
+    "./agent-sdk": {
+      "types": "./dist/lib/agent-sdk.d.ts",
+      "import": "./dist/lib/agent-sdk.js"
+    }
+  },
   "keywords": [
     "letta-package",
     "letta-mod",
@@ -24,7 +34,7 @@
     ]
   },
   "scripts": {
-    "build": "bun build mods/a2a-client.ts --target=node --format=esm --outfile=dist/a2a-client.mjs",
+    "build": "tsc -p tsconfig.build.json && bun build mods/a2a-client.ts --target=node --format=esm --outfile=dist/a2a-client.mjs",
     "test": "bun test",
     "check": "tsc --noEmit && bun run build"
   },
@@ -32,10 +42,22 @@
     "@a2a-js/sdk": "1.1.0"
   },
   "devDependencies": {
+    "@letta-ai/letta-agent-sdk": "0.8.3",
     "@types/bun": "1.3.4",
     "@types/node": "24.3.0",
     "typescript": "5.9.2"
   },
+  "peerDependencies": {
+    "@letta-ai/letta-agent-sdk": "0.8.3"
+  },
+  "peerDependenciesMeta": {
+    "@letta-ai/letta-agent-sdk": {
+      "optional": true
+    }
+  },
+  "trustedDependencies": [
+    "@letta-ai/letta-code"
+  ],
   "engines": {
     "node": ">=22.19.0"
   }

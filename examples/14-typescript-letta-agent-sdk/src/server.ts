@@ -1,70 +1,79 @@
-import express from "express";
 import { AGENT_CARD_PATH } from "@a2a-js/sdk";
-import {
-  DefaultRequestHandler,
-  InMemoryTaskStore,
-} from "@a2a-js/sdk/server";
-import {
-  agentCardHandler,
-  jsonRpcHandler,
-  UserBuilder,
-} from "@a2a-js/sdk/server/express";
+import { join } from "node:path";
 import { LettaAgentClient } from "@letta-ai/letta-agent-sdk";
-
-import { createAgentCard } from "./agent-card.js";
-import { loadConfig } from "./config.js";
 import {
-  AgentSdkTurnRunner,
-  resolveOrCreateAgent,
-} from "./letta-agent.js";
-import { LettaAgentExecutor } from "./letta-agent-executor.js";
+  createBridge,
+  createToolPolicy,
+  listenLoopback,
+} from "letta-a2a-bridge";
+import { createA2AClient, FileContextStore } from "letta-a2a-client";
+import { createA2ATools } from "letta-a2a-client/agent-sdk";
+import { loadConfig } from "./config.js";
+import { resolveOrCreateAgent } from "./letta-agent.js";
+import { createA2ASessionOptions } from "./tool-policy.js";
 
 const config = loadConfig();
+const outbound = config.outboundRoutes
+  ? createA2AClient({
+      routes: config.outboundRoutes,
+      contextStore: new FileContextStore(
+        join(
+          config.lettaWorkingDirectory,
+          ".letta",
+          "a2a-client-contexts.json",
+        ),
+      ),
+    })
+  : undefined;
 const lettaClient = new LettaAgentClient({ backend: "local" });
 const agentId = await resolveOrCreateAgent(lettaClient, config);
-
-const executor = new LettaAgentExecutor(
-  new AgentSdkTurnRunner(
-    lettaClient,
-    agentId,
-    config.lettaWorkingDirectory,
-  ),
-);
-const requestHandler = new DefaultRequestHandler(
-  createAgentCard(config.publicBaseUrl),
-  new InMemoryTaskStore(),
-  executor,
-);
-
-const app = express();
-app.disable("x-powered-by");
-app.get("/healthz", (_request, response) => {
-  response.json({ status: "ok", agentId });
+const bridge = createBridge({
+  client: lettaClient,
+  agentId,
+  sharingDomain: "example-14-local",
+  publicBaseUrl: config.publicBaseUrl,
+  name: "Letta Agent SDK Example",
+  sessionOptions(scope) {
+    if (config.clientAdapter === "mod") {
+      return { options: createA2ASessionOptions(config.lettaWorkingDirectory) };
+    }
+    if (!outbound) {
+      return {
+        options: { ...createToolPolicy(), cwd: config.lettaWorkingDirectory },
+      };
+    }
+    const tools = createA2ATools({
+      client: outbound,
+      getScope: () => scope,
+      signal: scope.signal,
+    });
+    return {
+      options: {
+        ...createA2ASessionOptions(config.lettaWorkingDirectory),
+        tools: tools.tools,
+      },
+      close: () => tools.close(),
+    };
+  },
 });
-app.use(
-  `/${AGENT_CARD_PATH}`,
-  agentCardHandler({ agentCardProvider: requestHandler }),
-);
-app.use(
-  "/",
-  jsonRpcHandler({
-    requestHandler,
-    userBuilder: UserBuilder.noAuthentication,
-    // A2A 1.0 only: legacyCompat is intentionally not enabled.
-  }),
-);
-
-const server = app.listen(config.port, "127.0.0.1", () => {
-  console.log(`Letta agent: ${agentId}`);
-  console.log(`A2A endpoint: ${config.publicBaseUrl}/`);
-  console.log(
-    `Agent Card: ${config.publicBaseUrl}/${AGENT_CARD_PATH}`,
-  );
-});
+const listener = await listenLoopback(bridge, { port: config.port });
+console.log(`Letta agent: ${agentId}`);
+console.log(`A2A endpoint: ${listener.url}/`);
+console.log(`Agent Card: ${listener.url}/${AGENT_CARD_PATH}`);
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
-    executor.close();
-    server.close(() => process.exit(0));
+    void listener
+      .close()
+      .then((result) => {
+        if (!result.complete) {
+          console.error(
+            "Bridge cleanup incomplete; execution may still be active",
+            result,
+          );
+          process.exitCode = 1;
+        }
+      })
+      .finally(() => outbound?.close());
   });
 }
