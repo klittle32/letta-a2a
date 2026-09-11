@@ -132,6 +132,8 @@ Example 13 is intentionally just installation instructions plus a small skill th
 
 Example 14 is an intentionally small TypeScript composition of the official A2A client/server and Letta Agent SDK. It demonstrates the `AgentExecutor` boundary directly without requiring Rust, Docker, agentgateway, OAuth, or A2A 0.3 compatibility. See [`examples/14-typescript-letta-agent-sdk/`](examples/14-typescript-letta-agent-sdk/).
 
+The optional [`letta-a2a-client`](packages/letta-a2a-client/) packaged mod provides the complementary outbound path for ordinary local Letta Code sessions. It registers one `a2a_invoke` tool backed by the official TypeScript A2A client; agentgateway and OAuth remain deferred.
+
 The Example 12 provider-free check uses its real ADK/A2A containers with a fake model and a dedicated Hermes OAuth identity, but does not start Hermes. Its opt-in live check invokes the stock Hermes `a2a_call` tool twice against a live ADK model and verifies Hermes audit plus gateway/ADK correlation. The interactive TUI walkthrough remains under [`examples/12-hermes-tui-to-google-adk/`](examples/12-hermes-tui-to-google-adk/).
 
 ## Persistence and reset

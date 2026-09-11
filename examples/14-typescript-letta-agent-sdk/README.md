@@ -8,7 +8,7 @@ Use the official JavaScript/TypeScript SDKs on both sides of one small adapter:
 - `@letta-ai/letta-agent-sdk` owns the persistent Letta agent, conversations, sessions, turns, and cancellation.
 - `LettaAgentExecutor` translates between their lifecycle events.
 
-No Rust binary, MCP server, gateway, OAuth fixture, or A2A 0.3 compatibility layer is involved.
+No Rust binary, MCP server, gateway, OAuth fixture, or A2A 0.3 compatibility layer is involved. The optional outbound client mod remains a separate package so the inbound server has a clear process boundary.
 
 ## Message flow
 
@@ -54,6 +54,8 @@ To expose an existing local agent instead, set its ID before starting:
 export A2A_LETTA_AGENT_ID='agent-local-...'
 ```
 
+For this bounded example, a reused agent must report an empty persisted tool list. Startup fails with the conflicting tool names rather than silently widening the noninteractive execution boundary. Use a dedicated tool-free agent here; broader per-agent policy belongs in a later authenticated deployment.
+
 In a second terminal, discover the server without a separate CLI:
 
 ```bash
@@ -73,6 +75,33 @@ Copy the returned `contextId` and continue the same conversation:
 bun run ask -- --context '<context ID>' \
   'What codeword did I ask you to remember? Reply with only the codeword.'
 ```
+
+## Add outbound A2A to Letta Code
+
+The repository's [`letta-a2a-client`](../../packages/letta-a2a-client/) package gives ordinary local Letta Code sessions an `a2a_invoke` mod tool. It uses the official TypeScript A2A client; no Rust CLI or skill is required.
+
+With this Example 14 server still running, configure and install the mod:
+
+```bash
+cat > ~/.letta/a2a-client.json <<'JSON'
+{
+  "routes": {
+    "local-example": "http://127.0.0.1:41241"
+  }
+}
+JSON
+
+cd ../..
+letta install ./packages/letta-a2a-client
+```
+
+Run `/reload`, then ask a local Letta Code agent:
+
+> Use `a2a_invoke` with target `local-example` to ask the remote agent to reply with exactly `MOD_A2A_OK`.
+
+The mod automatically preserves the returned remote A2A context for later calls from the same local Letta conversation. Its complete configuration, result contract, state behavior, and development commands are documented in the [package README](../../packages/letta-a2a-client/README.md).
+
+The direct packaged-install, invocation, and cross-process continuity proof is retained in [`docs/evidence/2026-09-10-a2a-client-mod.md`](../../docs/evidence/2026-09-10-a2a-client-mod.md).
 
 ## Expected result
 
@@ -136,5 +165,5 @@ A fresh SDK session is opened and closed for each turn. Closing the SDK session 
 - Loopback HTTP with no authentication. Add a gateway or middleware before exposing it beyond the local machine.
 - A2A tasks and the context-to-conversation map are in memory. Restarting the server loses both mappings, while the underlying Letta agent and conversations remain persisted.
 - One turn runs at a time per A2A context. Different contexts may run concurrently.
-- The example creates no tools for the Letta agent and gives each SDK session an empty tool allowlist.
+- Noninteractive SDK sessions stay in strict mode, request no base client toolset, and allowlist only `a2a_invoke`. A deterministic SDK permission callback approves that tool and denies every other approval request. Named or explicitly selected reused agents must also have no persisted tools or startup fails closed. When the outbound mod is installed but misconfigured, `a2a_invoke` remains visible and returns the configuration error; without the mod, it is absent.
 - Push notifications, REST, gRPC, binary parts, and durable task storage are intentionally out of scope.
