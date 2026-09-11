@@ -1,8 +1,12 @@
 import { test, expect } from "bun:test";
 import express from "express";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { generateKeyPair, SignJWT } from "jose";
 import { ServerCallContext } from "@a2a-js/sdk/server";
 import {
+  DurableBinding,
   LettaTurnCancelledError,
   type LettaTurnRequest,
   type LettaTurnRunner,
@@ -10,7 +14,7 @@ import {
 import { createServiceBinding } from "../services/bridge/src/service-binding.js";
 
 const keys = await generateKeyPair("RS256");
-async function fixture(runner?: LettaTurnRunner) {
+async function fixture(runner?: LettaTurnRunner, durability?: DurableBinding) {
   const requests: LettaTurnRequest[] = [];
   const callbacks: unknown[] = [];
   const runtime = runner ?? {
@@ -30,6 +34,7 @@ async function fixture(runner?: LettaTurnRunner) {
         publicBaseUrl: "https://bridge.example",
       },
       runtime,
+      durability: key === "alpha" ? durability : undefined,
       auth: {
         issuer: "https://issuer.test",
         audience: "test",
@@ -113,6 +118,35 @@ const send = (text = "hello", extra = {}) => ({
     parts: [{ text }],
   },
   ...extra,
+});
+
+test("durable service binding owns state until complete close and persists tasks", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "service-durability-"));
+  const options = { directory, bindingId: "service-alpha" };
+  const state = await DurableBinding.open(options);
+  const f = await fixture(undefined, state);
+  let reopened: DurableBinding | undefined;
+  try {
+    await expect(state.close()).rejects.toThrow();
+    const response = await (await f.rpc("SendMessage", send())).json();
+    expect(response.error).toBeUndefined();
+    const id = response.result.task.id;
+    expect((await f.bindings[0]!.close()).complete).toBe(true);
+    reopened = await DurableBinding.open(options);
+    const restarted = await fixture(undefined, reopened);
+    try {
+      const restored = await (await restarted.rpc("GetTask", { id })).json();
+      expect(restored.error).toBeUndefined();
+      expect(restored.result.id).toBe(id);
+      expect(restarted.requests).toHaveLength(0);
+    } finally {
+      await restarted.close();
+    }
+  } finally {
+    await f.close();
+    await reopened?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("app-owned cards mount independently, remain private, and direct unverified access fails", async () => {

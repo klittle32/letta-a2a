@@ -1,4 +1,5 @@
 import express from "express";
+import type { DurableBinding } from "./durable-binding.js";
 import {
   A2A_PROTOCOL_VERSION,
   AGENT_CARD_PATH,
@@ -52,6 +53,7 @@ export interface PushCloseResult {
 }
 export interface BridgeCloseResult extends CloseResult {
   push?: PushCloseResult;
+  requests?: { complete: boolean; pending: number };
 }
 
 export interface BridgeOptions {
@@ -78,6 +80,8 @@ export interface BridgeOptions {
   publicBaseUrl: string;
   name?: string;
   taskStore?: TaskStore;
+  /** Opened local single-owner recovery profile. Cannot be combined with another task store. */
+  durability?: DurableBinding;
   shutdownTimeoutMs?: number;
 }
 export type CreateBridgeOptions = BridgeOptions &
@@ -115,17 +119,24 @@ export function createBridge(options: CreateBridgeOptions) {
   }
   if (!options.sharingDomain.trim())
     throw new Error("An explicit sharing domain is required");
+  if (options.durability && options.taskStore)
+    throw new Error("Durability owns its task store");
+  if (options.durability && options.client)
+    options.durability.bindAgent(options.agentId!);
   const runner =
     options.runner ??
     new AgentSdkTurnRunner(options.client!, options.agentId!, {
       sharingDomain: options.sharingDomain,
       sessionOptions: options.sessionOptions!,
       beforeTurn: options.beforeTurn,
+      conversationMapping: options.durability?.conversationMapping,
+      execution: options.durability?.execution,
     });
   const executor = new LettaAgentExecutor(
     runner,
     options.shutdownTimeoutMs,
     options.onError,
+    options.durability,
   );
   const card = createAgentCard(options.publicBaseUrl, options.name);
   card.capabilities!.pushNotifications = !!options.push;
@@ -136,7 +147,10 @@ export function createBridge(options: CreateBridgeOptions) {
     );
   }
   // Custom stores are trusted application adapters and must preserve owner scoping.
-  const taskStore = options.taskStore ?? new InMemoryTaskStore();
+  const taskStore =
+    options.durability?.taskStore ??
+    options.taskStore ??
+    new InMemoryTaskStore();
   const sdk = new DefaultRequestHandler(
     card,
     taskStore,
@@ -153,7 +167,9 @@ export function createBridge(options: CreateBridgeOptions) {
     policy,
     !!options.push,
     options.onError,
+    options.durability,
   );
+  const releaseDurable = options.durability?.attach(options.sharingDomain);
   let closing: Promise<BridgeCloseResult> | undefined;
   return {
     card,
@@ -163,6 +179,8 @@ export function createBridge(options: CreateBridgeOptions) {
     authenticated: !!options.auth,
     close() {
       if (closing) return closing;
+      const closeDeadline = Date.now() + (options.shutdownTimeoutMs ?? 5000);
+      const requests = requestHandler.close(options.shutdownTimeoutMs ?? 5000);
       const turns = executor.close();
       closing = Promise.all([
         turns,
@@ -170,11 +188,23 @@ export function createBridge(options: CreateBridgeOptions) {
           options.push?.close?.bind(options.push),
           options.shutdownTimeoutMs ?? 5000,
         ),
-      ]).then(([result, push]) => ({
-        ...result,
-        ...(push ? { push } : {}),
-        complete: result.complete && (push?.complete ?? true),
-      }));
+        requests,
+      ]).then(async ([result, push, requests]) => {
+        // Requests entering the SDK before admission closed can introduce late
+        // executor work. Do not release storage using an earlier empty snapshot.
+        result = await executor.recheckClose(
+          Math.max(0, closeDeadline - Date.now()),
+        );
+        const complete =
+          result.complete && (push?.complete ?? true) && requests.complete;
+        await releaseDurable?.(complete);
+        return {
+          ...result,
+          ...(push ? { push } : {}),
+          ...(!requests.complete ? { requests } : {}),
+          complete,
+        };
+      });
       return closing;
     },
   };
@@ -207,6 +237,40 @@ type Params<K extends Exclude<keyof A2ARequestHandler, "getAgentCard">> =
 /** Authorization precedes every official handler call, including direct calls.
  * The SDK instance is private so its internal card lookups need not bypass policy. */
 class BridgeRequestHandler implements A2ARequestHandler {
+  private closed = false;
+  private readonly pending = new Set<Promise<void>>();
+  private assertOpen(): void {
+    if (this.closed) throw new UnsupportedOperationError("Bridge is closed");
+  }
+  private hold(): () => void {
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    this.pending.add(pending);
+    return () => {
+      this.pending.delete(pending);
+      finish();
+    };
+  }
+  private enter(): () => void {
+    this.assertOpen();
+    return this.hold();
+  }
+  async close(
+    timeout: number,
+  ): Promise<{ complete: boolean; pending: number }> {
+    this.closed = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      Promise.allSettled([...this.pending]),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeout);
+      }),
+    ]);
+    clearTimeout(timer);
+    return { complete: this.pending.size === 0, pending: this.pending.size };
+  }
   private readonly submissions = new Set<string>();
   private readonly messages = new Set<string>();
   private readonly cancellations = new Set<string>();
@@ -217,6 +281,7 @@ class BridgeRequestHandler implements A2ARequestHandler {
     private readonly policy: RequestPolicy,
     private readonly pushEnabled: boolean,
     private readonly onError?: BridgeOptions["onError"],
+    private readonly durability?: DurableBinding,
   ) {}
 
   async getAgentCard(context?: ServerCallContext) {
@@ -245,10 +310,20 @@ class BridgeRequestHandler implements A2ARequestHandler {
     return this.sdk.listTasks(p, scoped);
   }
   async cancelTask(p: Params<"cancelTask">, c: ServerCallContext) {
+    const done = this.enter();
+    try {
+      return await this.cancelTaskImpl(p, c);
+    } finally {
+      done();
+    }
+  }
+  private async cancelTaskImpl(p: Params<"cancelTask">, c: ServerCallContext) {
     const scoped = await this.policy.context("cancelTask", p, c);
+    this.assertOpen();
     // Establish ownership before touching task-global execution reservations.
     const task = await this.store.load(p.id, scoped);
     if (!task) throw new TaskNotFoundError();
+    await this.durability?.requestCancellation(p.id, scoped);
     if (
       this.cancellations.has(p.id) ||
       (this.submissions.has(p.id) && !this.executor.isActive(p.id))
@@ -266,7 +341,8 @@ class BridgeRequestHandler implements A2ARequestHandler {
           TaskState.TASK_STATE_AUTH_REQUIRED,
         ].includes(task.status.state) &&
         !this.executor.isActive(p.id) &&
-        !this.executor.canResume(p.id)
+        !this.executor.canResume(p.id) &&
+        !this.durability?.canResume(p.id, scoped)
       )
         throw new UnsupportedOperationError(
           "Task execution requires reconciliation",
@@ -319,6 +395,14 @@ class BridgeRequestHandler implements A2ARequestHandler {
     );
   }
   async sendMessage(p: SendMessageRequest, c: ServerCallContext) {
+    const done = this.enter();
+    try {
+      return await this.sendMessageImpl(p, c);
+    } finally {
+      done();
+    }
+  }
+  private async sendMessageImpl(p: SendMessageRequest, c: ServerCallContext) {
     const scoped = await this.policy.context("sendMessage", p, c);
     if (p.configuration?.taskPushNotificationConfig)
       await this.policy.context(
@@ -328,12 +412,24 @@ class BridgeRequestHandler implements A2ARequestHandler {
       );
     const release = await this.reserve(p, scoped);
     try {
+      this.assertOpen();
       return await this.sdk.sendMessage(p, scoped);
     } finally {
       release();
     }
   }
   async *sendMessageStream(p: SendMessageRequest, c: ServerCallContext) {
+    const done = this.enter();
+    try {
+      yield* this.sendMessageStreamImpl(p, c);
+    } finally {
+      done();
+    }
+  }
+  private async *sendMessageStreamImpl(
+    p: SendMessageRequest,
+    c: ServerCallContext,
+  ) {
     const scoped = await this.policy.context("sendMessageStream", p, c);
     if (p.configuration?.taskPushNotificationConfig)
       await this.policy.context(
@@ -342,6 +438,7 @@ class BridgeRequestHandler implements A2ARequestHandler {
         c,
       );
     const release = await this.reserve(p, scoped);
+    this.assertOpen();
     const stream = this.sdk.sendMessageStream(p, scoped);
     let done = false;
     try {
@@ -356,6 +453,7 @@ class BridgeRequestHandler implements A2ARequestHandler {
     } finally {
       if (done) release();
       else {
+        const done = this.hold();
         // Returning from the public iterator is a local disconnect, not task
         // cancellation. Keep the official ResultManager consuming/persisting.
         void (async () => {
@@ -373,6 +471,7 @@ class BridgeRequestHandler implements A2ARequestHandler {
             }
           } finally {
             release();
+            done();
           }
         })();
       }
@@ -382,6 +481,7 @@ class BridgeRequestHandler implements A2ARequestHandler {
     p: SendMessageRequest,
     c: ServerCallContext,
   ): Promise<() => void> {
+    this.assertOpen();
     validateHistory(p.configuration ?? {});
     if (!p.message?.messageId)
       throw new RequestMalformedError("message.messageId is required");
@@ -401,7 +501,13 @@ class BridgeRequestHandler implements A2ARequestHandler {
       throw new PushNotificationNotSupportedError();
     const taskId = p.message.taskId;
     const task = taskId ? await this.store.load(taskId, c) : undefined;
+    this.assertOpen();
     if (taskId && !task) throw new TaskNotFoundError();
+    const contextId = task?.contextId || p.message.contextId;
+    if (contextId)
+      this.durability?.assertAvailable(
+        JSON.stringify([c.user?.userName ?? "", c.tenant ?? "", contextId]),
+      );
     const key = JSON.stringify([
       c.user?.userName,
       c.tenant,
@@ -422,7 +528,8 @@ class BridgeRequestHandler implements A2ARequestHandler {
     try {
       if (taskId && task) {
         if (
-          !this.executor.canResume(taskId) ||
+          (!this.executor.canResume(taskId) &&
+            !this.durability?.canResume(taskId, c)) ||
           !task.status ||
           ![
             TaskState.TASK_STATE_INPUT_REQUIRED,
@@ -435,6 +542,8 @@ class BridgeRequestHandler implements A2ARequestHandler {
         if (p.message.contextId && p.message.contextId !== task.contextId)
           throw new RequestMalformedError("contextId mismatch");
       }
+      await this.durability?.reserveMessage(p.message, c);
+      this.assertOpen();
     } catch (error) {
       this.messages.delete(key);
       if (taskId) this.submissions.delete(taskId);

@@ -7,10 +7,11 @@ import { WebSocketServer } from "ws";
 import { once } from "node:events";
 import { LettaRuntime } from "../services/bridge/src/letta-runtime.js";
 import type { ContextStore } from "../services/bridge/src/context-store.js";
-import type { LettaTurnRequest } from "letta-a2a-bridge";
+import type { DurableBinding, LettaTurnRequest } from "letta-a2a-bridge";
 
 function fixture(
   options: {
+    durability?: DurableBinding;
     timeoutMs?: number;
     existing?: boolean;
     tools?: unknown[];
@@ -91,6 +92,7 @@ function fixture(
         return client;
       },
       invoke: options.invoke,
+      durability: options.durability,
     },
   );
   return { runtime, sessions, opened, created, clients, events, mappings };
@@ -216,6 +218,68 @@ test("returns package results and resumes saved idle owner-scoped continuity", a
   expect(f.runtime.unresolvedContexts).toEqual([]);
 });
 
+test("durable policy binds identity, ignores legacy mappings and wires execution", async () => {
+  const events: string[] = [];
+  const mappings = new Map<string, string>();
+  const durability = {
+    bindAgent(id: string) {
+      events.push(`bind:${id}`);
+    },
+    conversationMapping: {
+      get: (key: string) => mappings.get(key),
+      set: (key: string, value: string) => {
+        mappings.set(key, value);
+      },
+    },
+    execution: {
+      beforeTurn() {
+        events.push("beforeTurn");
+      },
+      beforeSend() {
+        events.push("beforeSend");
+      },
+      stopped() {
+        events.push("stopped");
+      },
+    },
+    unresolvedContexts: ["recovered-fence"],
+  } as unknown as DurableBinding;
+  const f = fixture({ durability });
+  f.mappings.set("owned-context", "legacy-conversation");
+  await f.runtime.connect();
+  await f.runtime.connect();
+  await f.runtime.runTurn(request());
+  expect(events).toEqual([
+    "bind:agent-id",
+    "beforeTurn",
+    "beforeSend",
+    "stopped",
+  ]);
+  expect(f.opened).toEqual(["agent-id"]);
+  expect(mappings.get("owned-context")).toBe("conv-ready");
+  expect(f.mappings.get("owned-context")).toBe("legacy-conversation");
+  expect(f.runtime.unresolvedContexts).toEqual(["recovered-fence"]);
+  await f.runtime.runTurn(request({ messageId: "next-message" }));
+  expect(f.opened).toEqual(["agent-id", "conv-ready"]);
+  expect(f.mappings.get("owned-context")).toBe("legacy-conversation");
+  await f.runtime.close();
+});
+
+test("durable agent mismatch fails before any SDK resume or session creation", async () => {
+  const f = fixture({
+    durability: {
+      bindAgent() {
+        throw new Error("Durable agent identity mismatch");
+      },
+    } as unknown as DurableBinding,
+  });
+  f.mappings.set("owned-context", "legacy-conversation");
+  await expect(f.runtime.connect()).rejects.toThrow("identity mismatch");
+  expect(f.opened).toEqual([]);
+  await expect(f.runtime.runTurn(request())).rejects.toThrow("not connected");
+  await f.runtime.close();
+});
+
 test("fails closed on persisted tools without stripping them", async () => {
   const tools = [{ id: "legitimate-tool" }];
   const f = fixture({ tools });
@@ -279,14 +343,12 @@ test("outbound uses trusted hop, route, token provider and session signal; close
       return pending;
     },
     stream: async function* () {
-      toolResult = f.sessions
-        .at(-1)!
-        .tools![0]!.execute("call", {
-          target: "agent-b",
-          message: "hello",
-          hop: 99,
-          caller: "attacker",
-        });
+      toolResult = f.sessions.at(-1)!.tools![0]!.execute("call", {
+        target: "agent-b",
+        message: "hello",
+        hop: 99,
+        caller: "attacker",
+      });
       yield { type: "result", success: true, result: "done" };
     },
   });

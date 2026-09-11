@@ -23,6 +23,13 @@ const TARGETS = {
 } as const;
 
 describe("primary agentgateway topology", () => {
+  test("durability is an explicit volume-backed bridge opt-in", () => {
+    const config = Bun.YAML.parse(readFileSync("compose.yaml", "utf8")) as any;
+    expect(config.services.bridge.environment.BRIDGE_DURABLE_DIRECTORY).toBe(
+      "${BRIDGE_DURABLE_DIRECTORY:-}",
+    );
+    expect(config.services.bridge.volumes).toContain("bridge-state:/data");
+  });
   test("pins one shared A2A-aware gateway with strict OAuth JWT authentication", () => {
     const config = Bun.YAML.parse(
       readFileSync("agentgateway/config.yaml", "utf8"),

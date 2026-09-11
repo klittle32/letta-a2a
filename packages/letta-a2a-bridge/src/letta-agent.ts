@@ -2,11 +2,14 @@ import type {
   LettaAgentClient,
   CreateSessionOptions,
   SDKResultMessage,
+  SDKMessage,
 } from "@letta-ai/letta-agent-sdk";
 
 import type { TrustedCaller } from "./request-policy.js";
 
 export interface LettaTurnRequest {
+  /** Host task correlation; never an execution ownership key. */
+  taskId?: string;
   /** Dedicated owner-scoped conversation key, not the raw wire context ID. */
   a2aContextId: string;
   /** Trusted host identity; never populated from message metadata. */
@@ -52,7 +55,28 @@ export interface SessionResources {
   options: CreateSessionOptions;
   close?(): void | Promise<void>;
 }
+export interface SessionExecutionLifecycle {
+  /** Durable guard under the context lock, before opening a session. */
+  beforeTurn?(request: LettaTurnRequest): void | Promise<void>;
+  /** Persist submission intent before any input can be sent. */
+  beforeSend?(
+    request: LettaTurnRequest,
+    correlation: { agentId: string; conversationId: string; otid: string },
+  ): void | Promise<void>;
+  /** Transport-return observation only; not durable acceptance. */
+  sent?(request: LettaTurnRequest): void | Promise<void>;
+  observe?(
+    request: LettaTurnRequest,
+    message: SDKMessage,
+  ): void | Promise<void>;
+  /** Normal success and all owned cleanup settled; not terminal task persistence. */
+  stopped?(request: LettaTurnRequest): void | Promise<void>;
+  /** Called after local quarantine is installed; failure leaves it installed. */
+  unresolved?(request: LettaTurnRequest): void | Promise<void>;
+}
 export interface SessionPolicy {
+  /** Optional awaited execution journal hooks, all under the context lock. */
+  execution?: SessionExecutionLifecycle;
   /** Trusted governance check inside the context lock, immediately before session setup. */
   beforeTurn?(request: LettaTurnRequest): void | Promise<void>;
   /** Optional idle-conversation continuity, called under the execution lock.
@@ -110,6 +134,8 @@ export class AgentSdkTurnRunner implements LettaTurnRunner {
       throw new Error("Context execution requires reconciliation");
     await this.policy.beforeTurn?.(request);
     throwIfCancelled(request.signal);
+    await this.policy.execution?.beforeTurn?.(request);
+    throwIfCancelled(request.signal);
     const known =
       this.conversations.get(request.a2aContextId) ??
       (await this.policy.conversationMapping?.get(request.a2aContextId));
@@ -151,10 +177,18 @@ export class AgentSdkTurnRunner implements LettaTurnRunner {
           );
           throwIfCancelled(request.signal);
           this.conversations.set(request.a2aContextId, ready.conversationId);
+          await this.policy.execution?.beforeSend?.(request, {
+            agentId: this.agentId,
+            conversationId: ready.conversationId,
+            otid: request.messageId,
+          });
+          throwIfCancelled(request.signal);
           // An ambiguous send must not be retried or followed by another turn.
           sent = true;
           await session.send(request.text, { otid: request.messageId });
+          await this.policy.execution?.sent?.(request);
           for await (const message of session.stream()) {
+            await this.policy.execution?.observe?.(request, message);
             if (message.type === "assistant") {
               assistantText += message.content;
               request.onAssistantText(message.content);
@@ -168,25 +202,25 @@ export class AgentSdkTurnRunner implements LettaTurnRunner {
         // Their controller-owned lifecycle must be closed explicitly too.
         await setup.close?.();
       }
+      // Interpret results only after all owned cleanup has settled. The SDK
+      // synthesizes failures on disconnect. Code 0.30.25 also emits interrupted
+      // status before backend cancellation settles, so it is not cancellation proof.
+      if (!result)
+        throw new Error("The Letta Agent SDK stream ended without a result");
+      if (
+        !result.success ||
+        result.stopReason === "interrupted" ||
+        result.stopReason === "requires_approval"
+      )
+        throw new Error("The Letta turn requires reconciliation");
+      await this.policy.execution?.stopped?.(request);
     } catch (error) {
-      // Includes ambiguous sends, stream exceptions, and failed async disposal.
-      if (sent) this.unresolved.add(request.a2aContextId);
+      // Includes ambiguous sends, stream/observation errors, and cleanup failures.
+      if (sent) {
+        this.unresolved.add(request.a2aContextId);
+        await this.policy.execution?.unresolved?.(request);
+      }
       throw error;
-    }
-
-    // Interpret the outcome only after session disposal has settled. The SDK
-    // synthesizes failed results on disconnection, so receiving a result alone
-    // is not evidence that execution stopped. Conservative quarantine is safer
-    // than guessing which unsuccessful results came from a live runtime.
-    if (!result) {
-      this.unresolved.add(request.a2aContextId);
-      throw new Error("The Letta Agent SDK stream ended without a result");
-    }
-    if (result.stopReason === "interrupted")
-      throw new LettaTurnCancelledError();
-    if (!result.success || result.stopReason === "requires_approval") {
-      this.unresolved.add(request.a2aContextId);
-      throw new Error("The Letta turn requires reconciliation");
     }
     if (request.signal.aborted) throw new LettaTurnCancelledError();
     return { text: assistantText || result.result || "" };

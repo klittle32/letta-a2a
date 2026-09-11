@@ -87,10 +87,10 @@ describe("SDK failure and cancellation evidence", () => {
     });
   }
 
-  test("explicit SDK interrupted result confirms cancellation", async () => {
+  test("SDK interrupted result does not confirm backend settlement", async () => {
     const f = fixture({ ...failed, stopReason: "interrupted" });
-    await assert.rejects(f.run(), LettaTurnCancelledError);
-    expect(f.runner.unresolvedContexts).toEqual([]);
+    await assert.rejects(f.run(), /reconciliation/);
+    expect(f.runner.unresolvedContexts).toEqual(["context"]);
   });
 
   test("a pending approval is not treated as completed execution", async () => {

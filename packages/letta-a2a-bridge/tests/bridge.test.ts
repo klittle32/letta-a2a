@@ -265,12 +265,9 @@ describe("extracted bridge", () => {
     expect(bridge.close()).toBe(close);
     expect((await close).complete).toBe(false);
     expect(aborted).toBe(true);
-    const later = await bridge.requestHandler.sendMessage(
-      request(),
-      callContext,
-    );
-    assert("status" in later);
-    expect(later.status?.state).toBe(TaskState.TASK_STATE_FAILED);
+    await expect(
+      bridge.requestHandler.sendMessage(request(), callContext),
+    ).rejects.toThrow("closed");
     finish.resolve();
     await pending;
   });
@@ -393,7 +390,8 @@ describe("extracted bridge", () => {
     expect(opened).toEqual(["agent"]);
     a.finish.resolve();
     await stream;
-    await cancel;
+    await assert.rejects(cancel, /not cancelable/i);
+    expect(runner.unresolvedContexts).toHaveLength(1);
   });
   test("cancellation retains the barrier through asynchronous disposal", async () => {
     const a = new Session("conversation"),
@@ -408,9 +406,9 @@ describe("extracted bridge", () => {
     const { run, opened } = runnerFixture([a, b]);
     const controller = new AbortController();
     const first = run("A", controller.signal);
-    const cancelled = assert.rejects(first, /cancelled/);
+    const cancelled = assert.rejects(first, /reconciliation/);
     await a.started.promise;
-    const second = run("B");
+    const second = assert.rejects(run("B"), /reconciliation/);
     controller.abort();
     a.finish.resolve();
     await disposing.promise;
@@ -418,10 +416,9 @@ describe("extracted bridge", () => {
     expect(opened).toEqual(["agent"]);
     release.resolve();
     await cancelled;
-    await b.started.promise;
     expect(a.disposed).toBe(true);
-    b.finish.resolve();
     await second;
+    expect(opened).toEqual(["agent"]);
   });
   test("injected official task store receives the trusted scoped request context", async () => {
     const seen: ServerCallContext[] = [];

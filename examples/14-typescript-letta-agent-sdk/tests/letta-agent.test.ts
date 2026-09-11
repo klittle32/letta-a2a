@@ -152,15 +152,16 @@ describe("AgentSdkTurnRunner cancellation and serialization", () => {
     }
   });
 
-  test("active cancellation holds the next turn until stream and disposal finish", async () => {
+  test("uncertain active cancellation holds disposal then quarantines the next turn", async () => {
     const a = new FakeSession("conversation", true);
     const b = new FakeSession("conversation");
     const { run, opened } = fixture([a, b]);
     const controller = new AbortController();
     const first = run("A", controller.signal);
-    const cancelled = assert.rejects(first, LettaTurnCancelledError);
+    const cancelled = assert.rejects(first, /reconciliation/);
     await a.started.promise;
     const second = run("B");
+    const blocked = assert.rejects(second, /reconciliation/);
     try {
       controller.abort();
       assert.equal(a.aborted, true);
@@ -172,9 +173,9 @@ describe("AgentSdkTurnRunner cancellation and serialization", () => {
       assert.deepEqual(opened, ["create:agent"]);
       a.close.resolve();
       await cancelled;
-      await b.started.promise;
+      await blocked;
       assert.equal(a.disposed, true);
-      assert.deepEqual(opened, ["create:agent", "resume:conversation"]);
+      assert.deepEqual(opened, ["create:agent"]);
     } finally {
       a.finish.resolve();
       a.close.resolve();

@@ -21,7 +21,9 @@ export {
   type SessionPolicy,
   type SessionScope,
   type SessionResources,
+  type SessionExecutionLifecycle,
 } from "./letta-agent.js";
+export { DurableBinding, type RecoveryRecord } from "./durable-binding.js";
 export { readText, textPart, agentMessage } from "./a2a-text.js";
 export { createToolPolicy, createAgentToolGuard } from "./tool-policy.js";
 export {

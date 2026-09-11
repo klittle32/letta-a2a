@@ -4,6 +4,7 @@ import {
   AgentSdkTurnRunner,
   createAgentToolGuard,
   createToolPolicy,
+  type DurableBinding,
   type LettaTurnRequest,
   type LettaTurnResult,
   type SessionResources,
@@ -15,7 +16,8 @@ import { A2A_EXTERNAL_TOOL, invokeA2A } from "./a2a-client.js";
 import type { AccessTokenProvider } from "./oauth-client.js";
 import type { CredentialOwner } from "letta-a2a-client";
 
-interface RuntimeDependencies {
+export interface RuntimeDependencies {
+  durability?: DurableBinding;
   credentialOwner?: CredentialOwner;
   createClient?: (
     options: ConstructorParameters<typeof LettaAgentClient>[0],
@@ -84,13 +86,17 @@ export class LettaRuntime {
           },
         ],
       }));
+    // Pin the resolved identity before the runner can resume or create a session.
+    this.dependencies.durability?.bindAgent(agentId);
     const guard = createAgentToolGuard(client, agentId);
     this.runner = new AgentSdkTurnRunner(client, agentId, {
       sharingDomain: this.definition.key,
       beforeTurn: (request) => guard(request.signal),
       // Exact owner-scoped keys only. Legacy unowned entries remain untouched.
-      // Saved mappings support idle continuity, NOT active restart recovery.
-      conversationMapping: {
+      // Durable opt-in never adopts the legacy idle-continuity map.
+      execution: this.dependencies.durability?.execution,
+      conversationMapping: this.dependencies.durability
+        ?.conversationMapping ?? {
         get: (key) => this.contextStore.get(this.definition.key, key),
         set: (key, conversationId) =>
           this.contextStore.save(this.definition.key, key, conversationId),
@@ -100,7 +106,12 @@ export class LettaRuntime {
   }
 
   get unresolvedContexts(): readonly string[] {
-    return this.runner?.unresolvedContexts ?? [];
+    return [
+      ...new Set([
+        ...(this.runner?.unresolvedContexts ?? []),
+        ...(this.dependencies.durability?.unresolvedContexts ?? []),
+      ]),
+    ];
   }
 
   runTurn(request: LettaTurnRequest): Promise<LettaTurnResult> {

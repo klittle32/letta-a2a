@@ -104,6 +104,7 @@ services:
       PORT: "8080"
       BRIDGE_PUBLIC_BASE_URL: http://bridge:8080
       CONTEXT_STORE_PATH: /data/contexts.json
+      BRIDGE_DURABLE_DIRECTORY: ${BRIDGE_DURABLE_DIRECTORY:-}
       TURN_TIMEOUT_MS: ${TURN_TIMEOUT_MS:-120000}
       MAX_A2A_HOPS: ${MAX_A2A_HOPS:-1}
       LETTA_TEST_MODEL: ${LETTA_TEST_MODEL:-openai/gpt-4.1-nano}

@@ -1,4 +1,6 @@
 import express from "express";
+import { join } from "node:path";
+import { DurableBinding } from "letta-a2a-bridge";
 import { loadAgentDefinitions, loadGatewayUrls } from "./config.js";
 import { ContextStore } from "./context-store.js";
 import { LettaRuntime } from "./letta-runtime.js";
@@ -65,9 +67,26 @@ const push = {
     },
   ],
 };
-const runtimes = definitions.map(
-  (definition) =>
-    new LettaRuntime(
+// Explicit opt-in only; the old ContextStore is never imported into durable state.
+const durableDirectory = process.env.BRIDGE_DURABLE_DIRECTORY?.trim();
+const runtimes: LettaRuntime[] = [];
+const bindings: ReturnType<typeof createServiceBinding>[] = [];
+const durableStates: DurableBinding[] = [];
+try {
+  for (const definition of definitions) {
+    // Definition keys are validated path-safe by loadAgentDefinitions.
+    const durability = durableDirectory
+      ? await DurableBinding.open({
+          directory: join(durableDirectory, definition.key),
+          bindingId: JSON.stringify([
+            definition.key,
+            definition.appServerUrl,
+            definition.displayName,
+          ]),
+        })
+      : undefined;
+    if (durability) durableStates.push(durability);
+    const runtime = new LettaRuntime(
       definition,
       contextStore,
       model,
@@ -76,39 +95,61 @@ const runtimes = definitions.map(
       oauthTokenProvider,
       maximumA2AHops,
       {
+        durability,
         credentialOwner: {
           issuer: auth.issuer,
           subject: oauthClientId,
           audience: auth.audience,
         },
       },
-    ),
-);
-const bindings = definitions.map((definition, index) =>
-  createServiceBinding({
-    definition,
-    runtime: runtimes[index]!,
-    auth,
-    push,
-    shutdownTimeoutMs,
-    oauth: {
-      tokenUrl: `${oauthPublicBaseUrl}/token`,
-      metadataUrl: `${oauthPublicBaseUrl}/.well-known/oauth-authorization-server`,
-      availableScopes: {
-        "a2a.discover": "Discover an A2A agent through the lab gateway.",
-        "a2a.invoke": "Invoke an A2A agent through the lab gateway.",
-      },
-      requiredScopes: ["a2a.invoke"],
-    },
-  }),
-);
-try {
-  await Promise.all(runtimes.map((runtime) => runtime.connect()));
+    );
+    runtimes.push(runtime);
+    bindings.push(
+      createServiceBinding({
+        definition,
+        runtime,
+        durability,
+        auth,
+        push,
+        shutdownTimeoutMs,
+        oauth: {
+          tokenUrl: `${oauthPublicBaseUrl}/token`,
+          metadataUrl: `${oauthPublicBaseUrl}/.well-known/oauth-authorization-server`,
+          availableScopes: {
+            "a2a.discover": "Discover an A2A agent through the lab gateway.",
+            "a2a.invoke": "Invoke an A2A agent through the lab gateway.",
+          },
+          requiredScopes: ["a2a.invoke"],
+        },
+      }),
+    );
+    await runtime.connect();
+  }
 } catch {
-  await Promise.allSettled(bindings.map((binding) => binding.close()));
-  for (const runtime of runtimes) runtime.close?.();
-  contextStore.close();
+  await closeResources();
   throw new Error("Bridge runtime connection failed");
+}
+
+async function closeResources(): Promise<boolean> {
+  // Drain actual runtime work before releasing storage. Attached durable owners
+  // refuse close if the binding cannot prove complete shutdown.
+  const bindingClosing = bindings.map((binding) => binding.close());
+  const runtimeClosing = runtimes.map((runtime) => runtime.close());
+  const [runtimeResults, bindingResults] = await Promise.all([
+    Promise.allSettled(runtimeClosing),
+    Promise.allSettled(bindingClosing),
+  ]);
+  const stateResults = await Promise.allSettled(
+    durableStates.map((state) => state.close()),
+  );
+  contextStore.close();
+  return (
+    runtimeResults.every((result) => result.status === "fulfilled") &&
+    bindingResults.every(
+      (result) => result.status === "fulfilled" && result.value.complete,
+    ) &&
+    stateResults.every((result) => result.status === "fulfilled")
+  );
 }
 const app = express();
 app.disable("x-powered-by");
@@ -134,19 +175,16 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
       server.closeAllConnections();
       process.exit(1);
     }, shutdownTimeoutMs + 1000);
-    void Promise.allSettled(bindings.map((binding) => binding.close())).then(
-      (results) => {
+    void closeResources().then(
+      (complete) => {
         server.closeAllConnections();
-        for (const runtime of runtimes) runtime.close?.();
-        contextStore.close();
         clearTimeout(deadline);
-        process.exit(
-          results.every(
-            (result) => result.status === "fulfilled" && result.value.complete,
-          )
-            ? 0
-            : 1,
-        );
+        process.exit(complete ? 0 : 1);
+      },
+      () => {
+        server.closeAllConnections();
+        clearTimeout(deadline);
+        process.exit(1);
       },
     );
   });

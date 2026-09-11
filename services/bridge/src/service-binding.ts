@@ -3,6 +3,7 @@ import {
   createBridgeRouter,
   createPushNotifications,
   type Bridge,
+  type DurableBinding,
   type LettaTurnRunner,
 } from "letta-a2a-bridge";
 import type { AgentDefinition } from "./config.js";
@@ -12,6 +13,7 @@ import { createAgentCard, type OAuthCardConfig } from "./mapping.js";
 export interface ServiceBindingOptions {
   definition: AgentDefinition & { publicBaseUrl: string };
   runtime: LettaTurnRunner;
+  durability?: DurableBinding;
   auth: AuthOptions;
   oauth: OAuthCardConfig;
   push: Parameters<typeof createPushNotifications>[0];
@@ -34,6 +36,7 @@ export function createServiceBinding(
   const push = createPushNotifications(options.push);
   const bridge = createBridge({
     runner: options.runtime,
+    durability: options.durability,
     sharingDomain: options.definition.key,
     publicBaseUrl: new URL(options.definition.publicBaseUrl).origin,
     name: options.definition.displayName,

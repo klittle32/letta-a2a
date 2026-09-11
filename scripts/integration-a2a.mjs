@@ -324,13 +324,16 @@ async function runChecks() {
       (value) => value !== "(none)" && value !== priorSlowTask.text,
     );
 
-    const outerCanceled = taskFromPayload(
-      await agentA.rpc("CancelTask", { id: outer.id }),
-    );
-    assert(outerCanceled, "outer CancelTask returned no task");
+    // SDK interruption is not evidence that the Code backend finished canceling.
+    // The controller must refuse a false CANCELED claim while still canceling its child.
+    let cancelError;
+    try { await agentA.rpc("CancelTask", { id: outer.id }); }
+    catch(error) { cancelError=error; }
+    assert(cancelError && /TASK_NOT_CANCELABLE|UNSUPPORTED_OPERATION/.test(String(cancelError)), "uncertain outer cancellation must return a protocol refusal");
+    const outerCanceled = await agentA.pollUntil(outer.id, task => taskState(task).endsWith("FAILED"));
     assert(
-      taskState(outerCanceled).endsWith("CANCELED"),
-      `outer cancel ended as ${taskState(outerCanceled)}`,
+      /reconciliation/i.test(messageText(outerCanceled.status?.message)),
+      "outer cancellation must explicitly retain uncertainty",
     );
     await waitForReferenceObservation(
       "last-canceled",
@@ -354,14 +357,14 @@ async function runChecks() {
       await reference.rpc("GetTask", { id: childTaskId }),
     );
     assert(
-      stableOuter && taskState(stableOuter).endsWith("CANCELED"),
-      `outer task did not remain canceled: ${taskState(stableOuter)}`,
+      stableOuter && taskState(stableOuter).endsWith("FAILED"),
+      `outer task falsely changed its unknown execution outcome: ${taskState(stableOuter)}`,
     );
     assert(
       stableChild && taskState(stableChild).endsWith("CANCELED"),
       `remote child did not remain canceled: ${taskState(stableChild)}`,
     );
-    passed("outer cancellation propagates to the remote child task");
+    passed("outer cancellation remains unresolved while the independent child confirms cancellation");
   }
 }
 
