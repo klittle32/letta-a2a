@@ -5962,6 +5962,151 @@ class Operation {
   }
 }
 
+// src/client-policy.ts
+import { createHash } from "node:crypto";
+function ownerKey(owner) {
+  if (typeof owner === "string") {
+    if (!owner)
+      throw new Error("A2A owner is required");
+    return JSON.stringify([owner]);
+  }
+  if (!owner.issuer || !owner.subject || !owner.audience)
+    throw new Error("A2A owner is incomplete");
+  return JSON.stringify([
+    owner.issuer,
+    owner.subject,
+    owner.audience,
+    owner.tenant ?? null
+  ]);
+}
+function destination(value) {
+  let u;
+  try {
+    u = new URL(value);
+  } catch {
+    throw new Error("Invalid A2A destination");
+  }
+  if (!["https:", "http:"].includes(u.protocol) || u.username || u.password || u.hash)
+    throw new Error("Invalid A2A destination");
+  return u;
+}
+function origins(values) {
+  return new Set(values.map((value) => {
+    const u = destination(value);
+    if (u.pathname !== "/" || u.search)
+      throw new Error("A2A scope must be an origin");
+    return u.origin;
+  }));
+}
+function compilePolicy(policy) {
+  const allowed = origins(policy.destinationOrigins);
+  const credential = policy.credential;
+  const scope = origins(credential?.origins ?? []);
+  const owner = credential ? ownerKey(credential.owner) : "anonymous";
+  const audience = credential?.audience;
+  const provide = credential?.provide;
+  if (!policy.peerIdentity || credential && (!audience || !credential.headerNames.length))
+    throw new Error("Incomplete A2A policy");
+  for (const origin of scope)
+    if (!allowed.has(origin))
+      throw new Error("Credential origin must be an approved destination");
+  let trusted;
+  try {
+    trusted = new Headers(policy.headers);
+  } catch {
+    throw new Error("Invalid A2A policy headers");
+  }
+  for (const name of ["authorization", "proxy-authorization", "cookie"])
+    if (trusted.has(name))
+      throw new Error("Use identity-scoped A2A credentials for authentication headers");
+  const names = new Set((credential?.headerNames ?? []).map((name) => name.toLowerCase()));
+  for (const name of names) {
+    new Headers({ [name]: "" });
+    if (trusted.has(name))
+      throw new Error("Conflicting A2A policy headers");
+  }
+  const protectedNames = new Set([
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "host",
+    ...names,
+    ...trusted.keys()
+  ]);
+  const check = (value) => {
+    if (!allowed.has(destination(value).origin))
+      throw new Error("Unapproved A2A destination");
+  };
+  const identity = createHash("sha256").update(JSON.stringify([policy.peerIdentity, owner, audience ?? null])).digest("hex");
+  return {
+    identity,
+    check,
+    signature: JSON.stringify([
+      [...allowed].sort(),
+      [...scope].sort(),
+      identity,
+      [...names].sort(),
+      [...trusted.entries()]
+    ]),
+    provide,
+    fetch(base, timeoutMs) {
+      return Object.assign(async (request, init) => {
+        const operation = new Operation(timeoutMs, init?.signal ?? (request instanceof Request ? request.signal : undefined));
+        try {
+          const url = typeof request === "string" ? request : request instanceof URL ? request.href : request.url;
+          check(url);
+          const headers = new Headers(init?.headers ?? (request instanceof Request ? request.headers : undefined));
+          for (const name of protectedNames)
+            if (headers.has(name) || request instanceof Request && request.headers.has(name))
+              throw new Error("Protected A2A request header");
+          trusted.forEach((value, name) => headers.set(name, value));
+          if (provide && scope.has(new URL(url).origin)) {
+            const result = await operation.run(() => provide({
+              signal: operation.signal,
+              origin: new URL(url).origin,
+              audience
+            }));
+            if (ownerKey(result.owner) !== owner || result.audience !== audience)
+              throw new Error("A2A credential identity changed");
+            const supplied = new Headers(result.headers);
+            for (const name of supplied.keys())
+              if (!names.has(name))
+                throw new Error("Undeclared A2A credential header");
+            for (const name of names)
+              if (!supplied.has(name))
+                throw new Error("Missing A2A credential header");
+            supplied.forEach((value, name) => headers.set(name, value));
+          }
+          operation.signal.throwIfAborted();
+          operation.close();
+          const response = await base(request, {
+            ...init,
+            headers,
+            redirect: "error",
+            credentials: "omit"
+          });
+          try {
+            if (response.redirected || response.status >= 300 && response.status < 400 || !response.ok)
+              throw new Error("A2A HTTP request rejected");
+            if (response.url)
+              check(response.url);
+          } catch {
+            try {
+              response.body?.cancel().catch(() => {});
+            } catch {}
+            throw new Error("A2A HTTP request rejected");
+          }
+          return response;
+        } catch {
+          throw new Error("A2A policy request failed");
+        } finally {
+          operation.close();
+        }
+      }, base);
+    }
+  };
+}
+
 // src/a2a-invoker.ts
 class A2AInvocationError extends Error {
   submissionAttempted;
@@ -6209,13 +6354,22 @@ function isStopped(state) {
   return state === TaskState.TASK_STATE_COMPLETED || state === TaskState.TASK_STATE_FAILED || state === TaskState.TASK_STATE_CANCELED || state === TaskState.TASK_STATE_REJECTED || state === TaskState.TASK_STATE_INPUT_REQUIRED || state === TaskState.TASK_STATE_AUTH_REQUIRED;
 }
 function createOfficialClientProvider(options = {}) {
-  const fetchImpl = options.fetchImpl ?? fetch;
+  const baseFetch = options.fetchImpl ?? fetch;
+  const policies = new Map(Object.entries(options.policies ?? {}).map(([url, policy]) => {
+    const compiled = compilePolicy(policy);
+    compiled.check(url);
+    return [new URL(url).href, compiled];
+  }));
   return async (url, signal) => {
+    const policy = policies.get(new URL(url).href);
+    const fetchImpl = policy?.fetch(baseFetch, options.discoveryTimeoutMs ?? 1e4) ?? baseFetch;
     const operation = new Operation(options.discoveryTimeoutMs ?? 1e4, signal);
     try {
       const origin = new URL(url);
       const check = (value) => {
-        const target = new URL(value);
+        if (policy)
+          return policy.check(value);
+        const target = destination(value);
         if (!["http:", "https:"].includes(target.protocol) || target.origin !== origin.origin) {
           throw new Error("A2A endpoint must use the configured HTTP(S) origin");
         }
@@ -6245,7 +6399,15 @@ function createOfficialClientProvider(options = {}) {
           }
         }
       });
-      return await operation.run(() => factory.createFromUrl(url));
+      const client = await operation.run(() => factory.createFromUrl(url));
+      const getCard = client.getAgentCard.bind(client);
+      client.getAgentCard = async (...args) => {
+        const card = await getCard(...args);
+        for (const endpoint of card.supportedInterfaces)
+          check(endpoint.url);
+        return card;
+      };
+      return client;
     } catch (cause) {
       throw failure(operation, { submissionAttempted: false }, cause);
     } finally {
@@ -6344,7 +6506,7 @@ function isRecord(value) {
 }
 
 // src/context-store.ts
-import { createHash, randomUUID } from "node:crypto";
+import { createHash as createHash2, randomUUID } from "node:crypto";
 import {
   mkdir,
   open,
@@ -6407,7 +6569,7 @@ class FileContextStore {
     signal.throwIfAborted();
     const directory = `${this.path}.locks`;
     await mkdir(directory, { recursive: true });
-    const hash = createHash("sha256").update(key).digest("hex");
+    const hash = createHash2("sha256").update(key).digest("hex");
     const release = await acquireFileLock(join2(directory, `${hash}.lock`), signal);
     try {
       signal.throwIfAborted();
@@ -6544,10 +6706,15 @@ class A2AToolService {
   closed = new AbortController;
   owners = new WeakMap;
   timeoutMs;
+  identities;
+  storageEndpoint(url) {
+    return this.identities[url] ? JSON.stringify(["a2a-policy", url, this.identities[url]]) : url;
+  }
   constructor(routes, invoker, contexts, options = {}) {
     this.routes = routes;
     this.invoker = invoker;
     this.contexts = contexts;
+    this.identities = Object.freeze({ ...options.identities });
     this.timeoutMs = options.timeoutMs ?? 120000;
     if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0)
       throw new Error("A2A timeoutMs must be positive and finite");
@@ -6571,7 +6738,7 @@ class A2AToolService {
         throw new Error("A2A taskId is required");
       if (input.action !== "get" && input.action !== "cancel")
         throw new Error("Invalid A2A task action");
-      const binding = await this.load(bindingKey(input.localScope, url));
+      const binding = await this.load(bindingKey(input.localScope, this.storageEndpoint(url)));
       signal.throwIfAborted();
       const result = await (input.action === "get" ? this.invoker.getTask(url, input.taskId, signal) : this.invoker.cancelTask(url, input.taskId, signal));
       this.check(result, input.taskId, binding.taskId === input.taskId ? binding.contextId : undefined);
@@ -6610,7 +6777,7 @@ class A2AToolService {
       const taskId = input.taskId || message.taskId || undefined;
       if (input.newContext && (explicitContext || taskId))
         throw new Error("new_context cannot be combined with context_id or task_id");
-      const key = bindingKey(input.localScope, url);
+      const key = bindingKey(input.localScope, this.storageEndpoint(url));
       return this.contexts.withLock(key, signal, async () => {
         const binding = await this.load(key);
         this.requireReadback(binding);
@@ -6627,14 +6794,14 @@ class A2AToolService {
           contextId = found.contextId;
         }
         if (contextId) {
-          return this.contexts.withLock(executionKey(url, contextId), signal, () => this.send(message, url, key, contextId, taskId, signal, details, binding, deadline));
+          return this.contexts.withLock(executionKey(this.storageEndpoint(url), contextId), signal, () => this.send(message, url, key, contextId, taskId, signal, details, binding, deadline));
         }
         return this.send(message, url, key, undefined, taskId, signal, details, binding, deadline);
       });
     });
   }
   async send(message, url, key, contextId, taskId, signal, details, binding, deadline) {
-    let record = contextId ? await this.load(executionKey(url, contextId)) : {};
+    let record = contextId ? await this.load(executionKey(this.storageEndpoint(url), contextId)) : {};
     if (contextId === binding.contextId && (binding.pending && !record.pending || binding.taskId && binding.messageId === record.messageId && (!record.taskId || record.submissionUnknown && !binding.submissionUnknown)))
       record = binding;
     this.requireReadback(record);
@@ -6643,7 +6810,7 @@ class A2AToolService {
       const current = await this.invoker.getTask(url, record.taskId, signal);
       this.check(current, record.taskId, contextId);
       record = this.snapshot(current, record.messageId);
-      await this.save(executionKey(url, contextId), record);
+      await this.save(executionKey(this.storageEndpoint(url), contextId), record);
       if (!terminal(record.state) && !(interrupted(record.state) && taskId === record.taskId)) {
         throw new Error(interrupted(record.state) ? `A2A task ${record.taskId} requires same-task followup; supply task_id.` : `A2A task ${record.taskId} is still working or unresolved; use task get/cancel before sending again.`);
       }
@@ -6668,7 +6835,7 @@ class A2AToolService {
     details.messageId = message.messageId;
     await this.save(key, record);
     if (contextId)
-      await this.save(executionKey(url, contextId), record);
+      await this.save(executionKey(this.storageEndpoint(url), contextId), record);
     let accepted;
     let releaseContext;
     let contextLease;
@@ -6696,7 +6863,7 @@ class A2AToolService {
         const hold = new Promise((resolve) => {
           releaseContext = resolve;
         });
-        contextLease = this.contexts.withLock(executionKey(url, task.contextId), signal, async () => {
+        contextLease = this.contexts.withLock(executionKey(this.storageEndpoint(url), task.contextId), signal, async () => {
           lockedContext = task.contextId;
           ready();
           await hold;
@@ -6704,7 +6871,7 @@ class A2AToolService {
         contextLease.catch(failed);
         await acquired;
       }
-      await this.save(executionKey(url, task.contextId), record);
+      await this.save(executionKey(this.storageEndpoint(url), task.contextId), record);
     };
     const persistTask = (task, acceptance = false) => {
       const update = persistence.then(() => writeTask(task, acceptance));
@@ -6742,9 +6909,9 @@ class A2AToolService {
         await this.save(key, completed);
         if (completed.contextId) {
           if (lockedContext)
-            await this.save(executionKey(url, completed.contextId), completed);
+            await this.save(executionKey(this.storageEndpoint(url), completed.contextId), completed);
           else
-            await this.contexts.withLock(executionKey(url, completed.contextId), signal, () => this.save(executionKey(url, completed.contextId), completed));
+            await this.contexts.withLock(executionKey(this.storageEndpoint(url), completed.contextId), signal, () => this.save(executionKey(this.storageEndpoint(url), completed.contextId), completed));
         }
       } else
         await persistTask(result, true);
@@ -6760,7 +6927,7 @@ class A2AToolService {
         if (!error.submissionAttempted && !accepted) {
           await this.save(key, binding);
           if (contextId)
-            await this.save(executionKey(url, contextId), previous);
+            await this.save(executionKey(this.storageEndpoint(url), contextId), previous);
         }
         const failure = {
           ...details,
@@ -6886,11 +7053,30 @@ function createA2AClient(options) {
   const timeoutMs = positiveInteger(options.timeoutMs ?? 120000, "timeoutMs");
   const pollIntervalMs = positiveInteger(options.pollIntervalMs ?? 500, "pollIntervalMs");
   const cancelTimeoutMs = positiveInteger(options.cancelTimeoutMs ?? 5000, "cancelTimeoutMs");
-  return new A2AToolService(routes, new PollingA2AInvoker(createOfficialClientProvider(), {
+  const policies = {};
+  const identities = {};
+  const seen = new Map;
+  for (const alias of Object.keys(options.routePolicies ?? {}))
+    if (!(alias in routes))
+      throw new Error("Policy references an unknown A2A route");
+  for (const [alias, url] of Object.entries(routes)) {
+    const policy = options.routePolicies?.[alias];
+    const compiled = policy ? compilePolicy(policy) : undefined;
+    compiled?.check(url);
+    const previous = seen.get(url);
+    if (seen.has(url) && (previous?.signature !== compiled?.signature || previous?.provide !== compiled?.provide))
+      throw new Error("Conflicting same-URL A2A alias policies; use separate client instances");
+    seen.set(url, compiled);
+    if (policy && compiled) {
+      policies[url] = policy;
+      identities[new URL(url).href] = compiled.identity;
+    }
+  }
+  return new A2AToolService(routes, new PollingA2AInvoker(createOfficialClientProvider({ policies }), {
     timeoutMs,
     pollIntervalMs,
     cancelTimeoutMs
-  }), options.contextStore ?? new MemoryContextStore, { timeoutMs });
+  }), options.contextStore ?? new MemoryContextStore, { timeoutMs, identities });
 }
 function positiveInteger(value, name) {
   if (!Number.isSafeInteger(value) || value <= 0 || value > 2147483647) {

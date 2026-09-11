@@ -39,10 +39,10 @@ Agent Card discovery is separate from the RPC inventory. JSON-RPC/SSE are the pa
 ### Normative semantics to retain
 
 - Specification §§3.1, 3.2.2, 3.4: terminal states are completed/failed/canceled/rejected; input-required/auth-required are interrupted. Blocking sends wait for either category. A stopped convenience call does not imply a terminal remote task.
-- Specification §3.4.2: `taskId` alone continues a task and implies its context; `contextId` alone starts a new task in that context. A supplied conflicting pair must be rejected. The Phase 2 client/tool supports this; the initial bridge still rejects existing-task execution.
+- Specification §3.4.2: `taskId` alone continues a task and implies its context; `contextId` alone starts a new task in that context. A supplied conflicting pair must be rejected. The Phase 2 client/tool supports this; Phase 3 bridge continuation requires a safely settled input/auth interruption.
 - Specification §§3.1.2, 3.1.6: streaming begins with a task snapshot or a single immediate message. Subscription returns the current task first and rejects terminal tasks. Interrupted tasks are not terminal.
 - Specification §3.2.2: `historyLength: 0` requests no history; a positive limit cannot be exceeded. The SDK handler implements this—do not duplicate it in the executor.
-- Specification §3.3.2: unsupported input media should yield the protocol's content-type error. Initial strict example validation prevents silent partial execution; moving that validation to the package request boundary is needed for full wire-error conformance.
+- Specification §3.3.2: unsupported input media yields the protocol's content-type error at the Phase 3 package request boundary, before execution. Mixed input is not partially executed.
 - Specification §7.6: in-task authentication is not the same as transport authorization failure. Any bridge interruption signal must come from an explicit trusted application/session outcome, not parsing assistant prose.
 
 ## Identity and state ownership
@@ -61,7 +61,7 @@ In SDK `1.1.0`, `ServerCallContext` exposes `user`, `tenant`, and trusted applic
 - The library owns typed messages, tasks, and distinct artifacts; the model adapter owns a bounded readable projection. Do not flatten the only copy of the protocol result.
 - Phase 2 returns the original SDK `Message | Task`. Only the model adapter projects bounded artifact/text/part summaries, with separate status text and explicit omission markers.
 - The initial text-only bridge rejects a mixed text/data/file message as a whole before invoking Letta. It must not act on the text while silently discarding the attachment.
-- Input/auth interruptions return task and context identity to the caller. Same-task follow-up is implemented by the Phase 2 client; bridge support remains Phase 3, not implied merely by stopping polling.
+- Input/auth interruptions return task and context identity to the caller. Same-task follow-up is implemented by the Phase 2 client and Phase 3 bridge. The latter requires an explicit, settled trusted runner outcome; stopping polling alone is insufficient.
 - Raw exception text is not a public error contract. Stable protocol failures are separate from public assistant artifacts; no hidden reasoning or secrets may be exposed.
 
 ## Cancellation and crash windows
@@ -93,17 +93,31 @@ Letta's SDK documentation states that missed events are not replayed and success
 | Input/auth interruptions classified as terminal | Phase 0 terminology, Phase 2 continuation | Stop polling without remote cancellation; client same-task followup is explicit |
 | Lab client polls interrupted tasks until timeout | Phase 4 convergence | Keep explicit as a current lab limitation; replace through the tested package rather than grow another result API |
 | Lossless typed client results, same-task follow-up, discovery timeout | Phase 2 | Typed core and shared adapters; see Phase 2 evidence for exercised cases |
-| Full task/list/subscription/ownership and media error matrix | Phase 3 | Test SDK composition and preserve protocol errors, not duplicate handlers |
+| Task/list/subscription/ownership and media error matrix | Phase 3 | Package regressions and root direct-HTTP/OAuth fixture; see Phase 3 evidence for limits |
 | Restart, ambiguous cancellation, persistence ordering | Phase 5 | Fault-injection tests; safe unresolved recovery is acceptable where certainty is unavailable |
 
 This contract intentionally precedes a stable public package API. It fixes semantics and ownership while leaving names and small composition details to tested consumers.
 
 ## Phase 2 client ownership decisions
 
-- The named-route facade journals/serializes convenience invocations. Its `connect` method returns the same-origin/redirect-restricted official SDK client; direct SDK method lifetimes and execution coordination remain application-owned.
+- The named-route facade journals/serializes convenience invocations. Its `connect` method returns the destination-policy/redirect-restricted official SDK client (same-origin by default); direct SDK method lifetimes and execution coordination remain application-owned.
 - File-backed users sharing a state path lock both first-context bindings and resolved remote contexts across processes. This does not coordinate separate state paths, arbitrary SDK consumers, or remote processes that ignore the protocol. Orphan locks fail closed; no age-based lease stealing.
 - A persisted submission-unknown flag is separate from accepted working/interrupted task state. It applies to new tasks and continuations. An unchanged interrupted snapshot cannot authorize replay. Automatic correlated-history recovery is not implemented; manual reconciliation preserves the journal.
 - All service invocation stages share one absolute monotonic deadline with core cleanup. Caller return may precede noncooperative persistence settlement, but callbacks are serialized and ownership is retained until actual settlement.
 - `drain(ownerSignal)` reports actual local operation/persistence completion, not remote cancellation certainty. SDK tool-group disposal uses it and rejects incomplete cleanup within its bound.
 - SDK 0.8.3 calls external `execute(id, input)` without a cancellation signal and does not serialize tool approval flags. The adapter requires an explicit owner signal; host session policy owns approvals. Bridge session-option factories expose a ready-conversation getter and owned cleanup hook so tools remain session-local.
 - Fresh SDK sessions receive fresh tool registrations. Transparent continuation across a lost SDK stream, event replay, and automatic mid-turn reconnect are not claimed.
+
+## Phase 3 policy and protocol decisions
+
+- Authenticated callers are projected from verified transport context into immutable issuer/subject/tenant identity. Binding and identity scope official SDK task/push storage and dedicated Letta conversations; shared agent memory is **not** a tenant isolation boundary.
+- Every operation is authorized. Current credential scopes remain request-local; `authorize` receives the original verified context. An owner-keyed scope cache permitted concurrent low-scope/high-scope tokens to mix permissions and was removed after independent reproduction.
+- Owner-scoped task lookup precedes shared cancellation/submission reservations. Foreign callers cannot briefly reserve an owner's cancellation or distinguish active foreign task IDs through continuation errors.
+- Existing-agent tool inventory is checked by ID inside the turn serialization lock. Session-local approvals and persisted-tool governance remain separate. This does not atomically exclude external administrative tool changes.
+- Client destination origins and credential origins are separate host policy. Credential providers confirm stable identity/audience, protected headers cannot be supplied by model/per-call overrides, refresh does not change continuity ownership, and ambiguous sends are not retried. Custom transports/stores remain trusted adapters.
+- Explicit delegation and bounded hop conventions are helper policy, not protocol fields. Applications project the verified decision and enforce it in outbound tool permissions. The mature service's legacy metadata/deployment configuration is not silently changed.
+- Push uses official stores/senders and V1 serialization with exact host-approved URL/Bearer bindings, redacted protocol results, bounded retries, ordered delivery, and awaited/bounded owned cleanup. `GetTask` remains authoritative.
+- Settled input/auth interruptions finish the official event bus without changing wire state. Disconnected stream consumers continue draining the official handler for persistence. Restart without a live owner still requires reconciliation, not the SDK missing-bus cancellation fallback.
+- Extended cards remain explicitly unadvertised on the bridge; the client supports capable peers. Text is the only executable bridge media profile. These tests do not establish full release, durable recovery, service convergence, or broad platform coverage.
+
+Evidence: [Phase 3 checkpoint](evidence/2026-09-11-a2a-packages-phase-3.md).

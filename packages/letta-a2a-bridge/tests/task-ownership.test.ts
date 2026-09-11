@@ -4,7 +4,7 @@ import { SendMessageRequest } from "@a2a-js/sdk";
 import { ServerCallContext } from "@a2a-js/sdk/server";
 import { createBridge } from "../src/index.js";
 
-describe("new-task-only extraction profile", () => {
+describe("same-task execution ownership", () => {
   for (const streaming of [false, true]) {
     test(`rejects active same-task ${streaming ? "streaming" : "ordinary"} follow-up without losing cancellation`, async () => {
       let finish!: () => void;
@@ -56,7 +56,7 @@ describe("new-task-only extraction profile", () => {
           } else {
             await bridge.requestHandler.sendMessage(followUp, context);
           }
-        }, /Same-task continuation is not supported/);
+        }, /Task execution is already active/);
         expect(calls).toBe(1);
         const closed = await bridge.close();
         expect(aborted).toBe(true);

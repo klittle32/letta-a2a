@@ -5,10 +5,18 @@ import {
 import { parseConfig } from "./config.js";
 import { MemoryContextStore, type ContextStore } from "./context-store.js";
 import { A2AToolService } from "./tool-service.js";
+import { compilePolicy, type ClientRoutePolicy } from "./client-policy.js";
+export type {
+  ClientRoutePolicy,
+  ClientCredential,
+  CredentialOwner,
+} from "./client-policy.js";
 
 export interface A2AClientOptions {
   routes: Record<string, string>;
   contextStore?: ContextStore;
+  /** Host-only policies keyed by route alias. Same-endpoint aliases must agree. */
+  routePolicies?: Readonly<Record<string, ClientRoutePolicy>>;
   timeoutMs?: number;
   pollIntervalMs?: number;
   cancelTimeoutMs?: number;
@@ -27,15 +35,40 @@ export function createA2AClient(options: A2AClientOptions): A2AToolService {
     options.cancelTimeoutMs ?? 5_000,
     "cancelTimeoutMs",
   );
+  const policies: Record<string, ClientRoutePolicy> = {};
+  const identities: Record<string, string> = {};
+  const seen = new Map<string, ReturnType<typeof compilePolicy> | undefined>();
+  for (const alias of Object.keys(options.routePolicies ?? {}))
+    if (!(alias in routes))
+      throw new Error("Policy references an unknown A2A route");
+  for (const [alias, url] of Object.entries(routes)) {
+    const policy = options.routePolicies?.[alias];
+    const compiled = policy ? compilePolicy(policy) : undefined;
+    compiled?.check(url);
+    const previous = seen.get(url);
+    if (
+      seen.has(url) &&
+      (previous?.signature !== compiled?.signature ||
+        previous?.provide !== compiled?.provide)
+    )
+      throw new Error(
+        "Conflicting same-URL A2A alias policies; use separate client instances",
+      );
+    seen.set(url, compiled);
+    if (policy && compiled) {
+      policies[url] = policy;
+      identities[new URL(url).href] = compiled.identity;
+    }
+  }
   return new A2AToolService(
     routes,
-    new PollingA2AInvoker(createOfficialClientProvider(), {
+    new PollingA2AInvoker(createOfficialClientProvider({ policies }), {
       timeoutMs,
       pollIntervalMs,
       cancelTimeoutMs,
     }),
     options.contextStore ?? new MemoryContextStore(),
-    { timeoutMs },
+    { timeoutMs, identities },
   );
 }
 

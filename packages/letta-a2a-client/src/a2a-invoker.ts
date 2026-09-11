@@ -15,6 +15,11 @@ import {
   JsonRpcTransportFactory,
 } from "@a2a-js/sdk/client";
 import { Operation } from "./operation.js";
+import {
+  compilePolicy,
+  destination,
+  type ClientRoutePolicy,
+} from "./client-policy.js";
 
 export type A2AClient = Client;
 export type A2AClientProvider = (
@@ -475,14 +480,27 @@ function isStopped(state: TaskState | undefined): boolean {
 export interface OfficialClientProviderOptions {
   fetchImpl?: typeof fetch;
   discoveryTimeoutMs?: number;
+  /** Host policies keyed by configured endpoint URL, not model route arguments. */
+  policies?: Readonly<Record<string, ClientRoutePolicy>>;
 }
 
 /** Same-origin HTTP(S) route binding, not a general SSRF or authentication policy. */
 export function createOfficialClientProvider(
   options: OfficialClientProviderOptions = {},
 ): A2AClientProvider {
-  const fetchImpl = options.fetchImpl ?? fetch;
+  const baseFetch = options.fetchImpl ?? fetch;
+  const policies = new Map(
+    Object.entries(options.policies ?? {}).map(([url, policy]) => {
+      const compiled = compilePolicy(policy);
+      compiled.check(url);
+      return [new URL(url).href, compiled] as const;
+    }),
+  );
   return async (url, signal) => {
+    const policy = policies.get(new URL(url).href);
+    const fetchImpl =
+      policy?.fetch(baseFetch, options.discoveryTimeoutMs ?? 10_000) ??
+      baseFetch;
     const operation = new Operation(
       options.discoveryTimeoutMs ?? 10_000,
       signal,
@@ -490,7 +508,8 @@ export function createOfficialClientProvider(
     try {
       const origin = new URL(url);
       const check = (value: string) => {
-        const target = new URL(value);
+        if (policy) return policy.check(value);
+        const target = destination(value);
         if (
           !["http:", "https:"].includes(target.protocol) ||
           target.origin !== origin.origin
@@ -547,7 +566,14 @@ export function createOfficialClientProvider(
           },
         },
       });
-      return await operation.run(() => factory.createFromUrl(url));
+      const client = await operation.run(() => factory.createFromUrl(url));
+      const getCard = client.getAgentCard.bind(client);
+      client.getAgentCard = async (...args) => {
+        const card = await getCard(...args);
+        for (const endpoint of card.supportedInterfaces) check(endpoint.url);
+        return card;
+      };
+      return client;
     } catch (cause) {
       throw failure(operation, { submissionAttempted: false }, cause);
     } finally {

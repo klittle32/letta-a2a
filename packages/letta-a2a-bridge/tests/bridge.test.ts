@@ -221,13 +221,10 @@ describe("extracted bridge", () => {
       ...textPart(""),
       content: { $case: "data", value: {} },
     });
-    const rejected = await bridge.requestHandler.sendMessage(
-      request(mixed),
-      callContext,
-    );
+    await expect(
+      bridge.requestHandler.sendMessage(request(mixed), callContext),
+    ).rejects.toThrow("Only nonempty text/plain input is supported");
     expect(calls).toBe(0);
-    assert("status" in rejected);
-    expect(rejected.status?.state).toBe(TaskState.TASK_STATE_FAILED);
     const events = [];
     for await (const event of bridge.requestHandler.sendMessageStream(
       request(),
@@ -294,17 +291,21 @@ describe("extracted bridge", () => {
         user: { isAuthenticated: true, userName: "alice" },
       }),
     ]) {
-      await bridge.requestHandler.sendMessage(request(), context);
+      await expect(
+        bridge.requestHandler.sendMessage(request(), context),
+      ).rejects.toThrow("Operation forbidden");
     }
-    await bridge.requestHandler.sendMessage(
-      request(
-        message(),
-        SendMessageConfiguration.fromJSON({
-          acceptedOutputModes: ["image/png"],
-        }),
+    await expect(
+      bridge.requestHandler.sendMessage(
+        request(
+          message(),
+          SendMessageConfiguration.fromJSON({
+            acceptedOutputModes: ["image/png"],
+          }),
+        ),
+        callContext,
       ),
-      callContext,
-    );
+    ).rejects.toThrow("Only text/plain output is supported");
     expect(calls).toBe(0);
     await bridge.close();
   });
@@ -422,7 +423,7 @@ describe("extracted bridge", () => {
     b.finish.resolve();
     await second;
   });
-  test("injected official task store receives the original request context", async () => {
+  test("injected official task store receives the trusted scoped request context", async () => {
     const seen: ServerCallContext[] = [];
     class Store extends InMemoryTaskStore {
       override async save(task: Task, context?: ServerCallContext) {
@@ -445,7 +446,14 @@ describe("extracted bridge", () => {
       callContext,
     );
     expect(seen.length).toBeGreaterThan(0);
-    expect(seen.every((c) => c === callContext)).toBe(true);
+    expect(
+      seen.every(
+        (c) =>
+          c !== callContext &&
+          c.requestedVersion === callContext.requestedVersion &&
+          !!c.user?.userName,
+      ),
+    ).toBe(true);
     assert("id" in task);
     const readback = await bridge.requestHandler.getTask(
       GetTaskRequest.fromJSON({ id: task.id, historyLength: 0 }),

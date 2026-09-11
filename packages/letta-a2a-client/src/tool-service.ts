@@ -29,6 +29,8 @@ export interface A2AToolTaskInput {
 
 export interface A2AToolServiceOptions {
   timeoutMs?: number;
+  /** Host-derived opaque caller/peer policy identities keyed by endpoint. */
+  identities?: Readonly<Record<string, string>>;
 }
 
 /** Controller metadata only: never persist messages, artifacts or credentials. */
@@ -60,6 +62,13 @@ export class A2AToolService {
   private readonly closed = new AbortController();
   private readonly owners = new WeakMap<AbortSignal, Set<Promise<unknown>>>();
   private readonly timeoutMs: number;
+  private readonly identities: Readonly<Record<string, string>>;
+
+  private storageEndpoint(url: string): string {
+    return this.identities[url]
+      ? JSON.stringify(["a2a-policy", url, this.identities[url]])
+      : url;
+  }
 
   constructor(
     private readonly routes: Record<string, string>,
@@ -67,6 +76,7 @@ export class A2AToolService {
     private readonly contexts: ContextStore,
     options: A2AToolServiceOptions = {},
   ) {
+    this.identities = Object.freeze({ ...options.identities });
     this.timeoutMs = options.timeoutMs ?? 120_000;
     if (!Number.isFinite(this.timeoutMs) || this.timeoutMs <= 0)
       throw new Error("A2A timeoutMs must be positive and finite");
@@ -99,7 +109,9 @@ export class A2AToolService {
         throw new Error("Invalid A2A task action");
       // Remote peer credentials authorize task access. Local scope is continuity,
       // not an invented tenant boundary. Never queue cancellation behind a send.
-      const binding = await this.load(bindingKey(input.localScope, url));
+      const binding = await this.load(
+        bindingKey(input.localScope, this.storageEndpoint(url)),
+      );
       signal.throwIfAborted();
       const result = await (input.action === "get"
         ? this.invoker.getTask(url, input.taskId, signal)
@@ -156,7 +168,7 @@ export class A2AToolService {
         throw new Error(
           "new_context cannot be combined with context_id or task_id",
         );
-      const key = bindingKey(input.localScope, url);
+      const key = bindingKey(input.localScope, this.storageEndpoint(url));
       return this.contexts.withLock(key, signal, async () => {
         const binding = await this.load(key);
         this.requireReadback(binding);
@@ -179,7 +191,7 @@ export class A2AToolService {
         }
         if (contextId) {
           return this.contexts.withLock(
-            executionKey(url, contextId),
+            executionKey(this.storageEndpoint(url), contextId),
             signal,
             () =>
               this.send(
@@ -221,7 +233,9 @@ export class A2AToolService {
     binding: RecordState,
     deadline: number,
   ): Promise<Task | Message> {
-    let record = contextId ? await this.load(executionKey(url, contextId)) : {};
+    let record = contextId
+      ? await this.load(executionKey(this.storageEndpoint(url), contextId))
+      : {};
     // The binding is also a recovery journal if a process died between the two writes.
     if (
       contextId === binding.contextId &&
@@ -238,7 +252,10 @@ export class A2AToolService {
       const current = await this.invoker.getTask(url, record.taskId, signal);
       this.check(current, record.taskId, contextId);
       record = this.snapshot(current, record.messageId);
-      await this.save(executionKey(url, contextId!), record);
+      await this.save(
+        executionKey(this.storageEndpoint(url), contextId!),
+        record,
+      );
       if (
         !terminal(record.state) &&
         !(interrupted(record.state) && taskId === record.taskId)
@@ -271,7 +288,11 @@ export class A2AToolService {
     details.messageId = message.messageId;
     // Journal before submission, including first sends with no remote readback ID.
     await this.save(key, record);
-    if (contextId) await this.save(executionKey(url, contextId), record);
+    if (contextId)
+      await this.save(
+        executionKey(this.storageEndpoint(url), contextId),
+        record,
+      );
     let accepted: Task | undefined;
     let releaseContext: (() => void) | undefined;
     let contextLease: Promise<void> | undefined;
@@ -306,7 +327,7 @@ export class A2AToolService {
           releaseContext = resolve;
         });
         contextLease = this.contexts.withLock(
-          executionKey(url, task.contextId),
+          executionKey(this.storageEndpoint(url), task.contextId),
           signal,
           async () => {
             lockedContext = task.contextId;
@@ -317,7 +338,10 @@ export class A2AToolService {
         void contextLease.catch(failed);
         await acquired;
       }
-      await this.save(executionKey(url, task.contextId), record);
+      await this.save(
+        executionKey(this.storageEndpoint(url), task.contextId),
+        record,
+      );
     };
     // The core may stop awaiting a started hook when aborted. Keep every write
     // in our own queue: recovery and lock release must outlive those callbacks.
@@ -364,13 +388,19 @@ export class A2AToolService {
         await this.save(key, completed);
         if (completed.contextId) {
           if (lockedContext)
-            await this.save(executionKey(url, completed.contextId), completed);
+            await this.save(
+              executionKey(this.storageEndpoint(url), completed.contextId),
+              completed,
+            );
           else
             await this.contexts.withLock(
-              executionKey(url, completed.contextId),
+              executionKey(this.storageEndpoint(url), completed.contextId),
               signal,
               () =>
-                this.save(executionKey(url, completed.contextId!), completed),
+                this.save(
+                  executionKey(this.storageEndpoint(url), completed.contextId!),
+                  completed,
+                ),
             );
         }
       } else await persistTask(result, true);
@@ -385,7 +415,10 @@ export class A2AToolService {
         if (!error.submissionAttempted && !accepted) {
           await this.save(key, binding);
           if (contextId)
-            await this.save(executionKey(url, contextId), previous);
+            await this.save(
+              executionKey(this.storageEndpoint(url), contextId),
+              previous,
+            );
         }
         const failure = {
           ...details,

@@ -116,7 +116,42 @@ Arguments are runtime-validated. Agent/conversation identity comes from the host
 
 ## Boundary and development
 
-Only named trusted HTTP(S) routes are accepted by the composed client. Configured URLs cannot contain credentials, queries, or fragments. Discovery and advertised/actual endpoints must stay on the configured origin; redirects are rejected. This narrow policy is **not** general SSRF protection, OAuth, multi-tenant authorization, or DNS rebinding protection. Those application-policy seams remain later plan work. The peer must implement truthful A2A identity/task semantics.
+Only named trusted HTTP(S) routes are accepted by the composed client. Configured URLs cannot contain credentials, queries, or fragments. Without an explicit policy, discovery and advertised/actual endpoints must stay on the configured origin. Redirects are rejected.
+
+Host applications can supply `routePolicies` keyed by route name. A policy separates approved destination origins from credential origins and binds continuity to a stable peer and caller identity:
+
+```ts
+const owner = { issuer: "https://issuer.example", subject: "application", audience: "remote-a2a" };
+const remote = createA2AClient({
+  routes: { peer: "https://peer.example" },
+  routePolicies: {
+    peer: {
+      peerIdentity: "peer-agent",
+      destinationOrigins: ["https://peer.example"],
+      credential: {
+        owner,
+        audience: "remote-a2a",
+        origins: ["https://peer.example"],
+        headerNames: ["Authorization"],
+        async provide({ signal, audience }) {
+          // Application-owned OAuth exchange/cache; do not put credentials in JSON config.
+          const token = await tokenProvider.getAccessToken(signal);
+          return { owner, audience, headers: { Authorization: `Bearer ${token}` } };
+        },
+      },
+      headers: { "x-letta-a2a-hop": "1" }, // Only for an authenticated delegate.
+    },
+  },
+});
+```
+
+The provider must confirm the configured logical owner and audience on each call. Rotated tokens preserve identity; changed owner/audience fails closed. This confirmation is a trusted application contract, not JWT validation by the package. The receiving application must validate the credential. Token providers, authorization servers, and their secret storage remain outside this package.
+
+Policy credentials and trusted headers cannot be overridden through the official client's per-call `serviceParameters`. Credential acquisition is bounded; failed authentication does not cause an automatic send retry. Same-URL aliases must agree on policy and provider identity. Use separate client instances for different owners; their hashed stable identity namespaces prevent one from inheriting the other's stored contexts. Mod JSON configuration remains anonymous; authenticated policy is supplied through host code, not model arguments.
+
+`fetchImpl` is a **trusted extension**, not a sandbox. A custom fetch implementation must honor request headers, redirect restrictions, signals, and response cleanup. Custom `ContextStore.withLock` implementations must serialize matching keys, reject canceled waiters before invoking their work, and retain ownership until started work actually settles.
+
+This policy is not general SSRF/DNS-rebinding protection, server-side authorization, or remote execution enforcement. The peer must implement truthful A2A identity/task semantics.
 
 The client can carry all SDK part types; the separate initial bridge profile still executes text only. Neither package silently adds an inbound listener to an ordinary Letta session.
 

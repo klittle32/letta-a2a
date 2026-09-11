@@ -1,19 +1,19 @@
 # letta-a2a-bridge
 
-Phase 1 extraction of Example 14, using `@a2a-js/sdk` **1.1.0** and `@letta-ai/letta-agent-sdk` **0.8.3**. This is a narrow anonymous, loopback, text-only, in-memory profile—not the full package-plan release or multi-tenant hosting.
+A text-only A2A 1.0 JSON-RPC/SSE bridge using `@a2a-js/sdk` **1.1.0** and `@letta-ai/letta-agent-sdk` **0.8.3**. Phase 3 adds authenticated ownership, interrupted-task continuation, subscription, push, and application policy seams. This is not yet the full package-plan release or a durable multi-tenant hosting service.
 
 ## Compose an existing agent
 
 ```ts
-import { createBridge, createToolPolicy, listenLoopback } from "letta-a2a-bridge";
+import { createBridge, createToolPolicy, createAgentToolGuard, listenLoopback } from "letta-a2a-bridge";
 
-// The application supplies its LettaAgentClient and explicitly selected agent ID.
-// First establish persisted-tool governance; client allowlists alone cannot do it.
+const guard = createAgentToolGuard(client, agentId, { allowedToolIds: [] });
 const bridge = createBridge({
   client,
   agentId,
-  sharingDomain: "my-local-app",
+  sharingDomain: "my-local-binding",
   publicBaseUrl: "http://127.0.0.1:41241",
+  beforeTurn: request => guard(request.signal),
   sessionOptions: { ...createToolPolicy([]), cwd: process.cwd() },
 });
 const listener = await listenLoopback(bridge, { port: 41241 });
@@ -21,37 +21,60 @@ const result = await listener.close();
 if (!result.complete) console.error("Cleanup requires attention", result);
 ```
 
-Imports never create agents, start listeners, install mods, or register process hooks. The client remains application-owned. Example 14 owns its explicit agent-create/reuse logic and dedicated tool-free fixture guard; that guard is **not** a universal package policy. `createToolPolicy(names)` provides strict, noninteractive client-tool approval/denial primitives. Explicit `sessionOptions` may instead configure an application's legitimate existing tools, but the application must establish their persisted/server-side governance before binding the runtime. Incoming text cannot grant approval.
+Imports create no agents, listeners, global mods, or process hooks. The application supplies and owns its client and existing agent. `createAgentToolGuard` reads the current agent inventory before each invocation and rejects unapproved persisted **tool IDs**, missing identity, or unavailable inventory. It never removes tools. Use its explicit allowlist for legitimate existing tools. This is a read-only preflight, not an atomic lock against other administrators changing agent configuration.
 
-For session-owned tools, `sessionOptions` may be a factory receiving `SessionScope` (`agentId`, live ready `conversationId`, and the turn's `signal`). Return `{ options, close? }`: options configure that fresh SDK session; awaited cleanup disposes its application-owned resources. SDK 0.8.3 does not pass a per-call signal to external tools, so the client adapter needs this explicit lifecycle. A cleanup failure quarantines a sent turn's context rather than silently treating disposal as complete. See Example 14 for direct `letta-a2a-client/agent-sdk` composition.
+`beforeTurn` runs inside the context execution lock, before SDK setup. `createToolPolicy(names)` separately provides strict, noninteractive connection-owned tool approval; it does not govern persisted server tools. Incoming text cannot grant approval. An application may supply a different explicit session policy when needed.
 
-## Library boundary
+For session-owned tools, `sessionOptions` accepts a factory receiving `SessionScope`: agent ID, immutable trusted caller/delegation, scoped and original protocol context IDs, message ID, live ready conversation-ID getter, and turn signal. Return `{ options, close? }`; awaited cleanup disposes owned resources. SDK 0.8.3 does not pass a per-call signal to external tools, so adapters require the explicit owner signal. Failed disposal quarantines sent work. Avoid SDK `stateless` mode when durable transcript behavior is required; the live continuity fixture uses ordinary sessions.
 
-- `createBridge` returns the official `DefaultRequestHandler` with a narrow new-task-only guard on its two send methods, plus the executor, generated card, and `close`. It accepts the official `TaskStore`; the default is `InMemoryTaskStore`. SDK call contexts reach that store without replacement.
-- `AgentSdkTurnRunner(client, agentId, policy)` owns a dedicated in-memory A2A-context → Letta-conversation mapping. Share **one runner per binding** across any local handler compositions. Never create competing execution owners for the same binding, including in another process. This extraction has no distributed lease or cross-process enforcement.
-- `LettaAgentExecutor(runner, shutdownTimeoutMs?)` implements the official `AgentExecutor`. Applications can compose it directly with official handlers/transports. A tiny `LettaTurnRunner` interface supports deterministic tests; successful return or `LettaTurnCancelledError` must mean the underlying turn has actually stopped.
-- `listenLoopback` uses official Express card/JSON-RPC middleware and binds only `127.0.0.1`. Port zero is supported; discovery advertises the allocated URL. Custom authenticated/non-loopback deployment is not supported by this profile.
-- `readText`, `textPart`, and `agentMessage` use official message/part types. Mixed or unsupported input is rejected as a whole before calling Letta. Requested output modes must permit `text/plain`.
+## Authentication and authorization
 
-The sharing domain is an explicit ownership contract for **all local anonymous callers**, not an identity credential. The executor refuses nonempty tenants and authenticated call contexts instead of accidentally reusing their conversations. The SDK's task-owner seam remains intact, but this package does not yet provide authorized per-caller context mapping. Do not expose the handler to mutually untrusted callers, even through a gateway. Conversations share agent memory.
+Without `auth`, only the explicit shared anonymous loopback profile is permitted. Its callers are one trust domain, not independent identities. Authenticated applications supply:
 
-## Lifecycle and limits
+- `transport.middleware` and `transport.userBuilder`: validate credentials and produce application-verified SDK users. JWT verification, issuer/audience/expiry/scope policy, token exchanges, and secrets remain application-owned.
+- `auth.projectCaller(context)`: project verified issuer, subject, tenant, and optional `{ hop, allowDelegation }`. Never derive authority from message metadata or unchecked headers.
+- `auth.authorize({ caller, operation, params, context })`: authorize **every** operation, including discovery and push registration. Read token-specific claims from this request's original verified `context`. Never cache token scopes by principal: two simultaneous tokens for one principal may grant different permissions.
+- `security`: the actual Agent Card security schemes and requirements. No OAuth/Bearer advertisement is guessed from a callback; supply the truthful declaration when exposing an authenticated endpoint.
 
-Each context gets a dedicated conversation, resumed in later **new tasks**. Incoming task IDs are rejected before SDK dispatch in this profile, so a follow-up cannot overwrite an active task's cancellation ownership. The runtime keeps the predecessor's barrier when a queued waiter is canceled. Different contexts can run concurrently. The mapping creates no aliases to the same conversation; callers cannot supply an existing conversation ID.
+The package snapshots principal identity and projects binding/issuer/subject/tenant into the official SDK owner/tenant seams. Wire tenant conflicts reject; caller metadata cannot choose another owner or SDK conversation. Task ownership is established before shared execution reservations. Protected discovery uses private/no-store responses. Gateway authentication alone is not a replacement for the direct-endpoint policy.
 
-Streaming emits public assistant text only, with stable artifact identity and append/final-chunk flags. Failures retain partial chunks as nonfinal and expose a sanitized status message—not raw exceptions or SDK errors. No automatic replay follows an ambiguous send, missing/unsuccessful result, pending approval, or failed session disposal: that context is quarantined for this runner's lifetime. The SDK can synthesize failed results on disconnection; they do not prove execution stopped. An explicit SDK `interrupted` result confirms cancellation only after disposal settles. Other unsuccessful results are conservatively quarantined, including errors that might have ended cleanly. Operational recovery is deliberately manual; do not replace the runner and replay without reconciling the old execution.
+`sharingDomain` identifies the binding as well as the anonymous trust domain. Use distinct values for independent bindings sharing storage. Custom task/push stores are trusted adapters and must honor projected SDK owner and tenant scope. Separate caller conversations still share **one agent's memory**; use separate agents/runtimes for mutually untrusted memory domains.
 
-`bridge.close()` and `listener.close()` are asynchronous and idempotent. They stop acceptance, request active/queued cancellation, and wait up to `shutdownTimeoutMs` (default 5000). The listener then closes remaining HTTP connections. A timed-out turn keeps its context serialization barrier until the actual stream and async disposal settle; shutdown never releases it on the timer. The result contains `complete`, `pendingTaskIds`, and `unresolvedContextIds`. Repeated close returns the same promise/result, not a refreshed recovery assessment. Library code never calls `process.exit()`.
+See [`tests/packages-phase3.test.ts`](../../tests/packages-phase3.test.ts) for executable application-owned OAuth composition, including negative credentials and concurrent scope isolation. `listenLoopback` binds only `127.0.0.1`; other hosting/TLS remains application composition.
 
-Task history/artifact processing and transport behavior are SDK-owned. This phase does **not** claim a complete wire-error conformance matrix: unsupported input/output and unsupported identity-bearing execution currently yield a failed task rather than a protocol media/authorization error. Same-task interrupted continuation, input/auth outcomes, push, durability/restart recovery, authenticated ownership, REST/gRPC, extended cards, retention, and multi-process ownership are deferred. Supplying a durable task store alone does not make the bridge durable.
+## Protocol and lifecycle
 
-## Validate without providers
+`createBridge` returns a policy-guarded official-handler facade, executor, card, and asynchronous `close`. The SDK owns protocol serialization, task history/artifacts, task/list filtering, and push RPCs. The default task store is in-memory.
+
+- Text-only input/output is declared; unsupported or mixed input fails with a protocol media error before execution.
+- `contextId` starts a new task in that caller's conversation. `taskId` resumes only an explicitly settled input/auth interruption. Active, terminal, duplicate, conflicting-context, or unknown-recovery execution rejects before dispatch.
+- Trusted custom runners return `{ text, state: "input_required" | "auth_required", detail? }` only after execution has settled. `detail` is public. Assistant prose never creates an interruption. The default SDK runner does not reinterpret pending tool approval as safely resumable execution.
+- Streams emit public assistant artifacts, not hidden reasoning. Failed partial output stays nonfinal. Disconnecting does not cancel work: the official handler continues consuming for task persistence. Subscription begins with the current snapshot and rejects terminal tasks.
+- A2A SDK 1.1.0 keeps auth-required queues open. A settled runner interruption finishes the official event bus without changing its wire state, preventing a stale consumer from processing the next turn.
+- Unknown SDK execution/disposal outcomes quarantine the context. No automatic replay, cross-process ownership takeover, or recovery certainty is invented. Restored work without a live execution owner cannot be canceled through the SDK's missing-bus shortcut.
+
+Share one runner/execution owner per binding. Context serialization remains held until actual execution and disposal settle, even after timeout. Duplicate-message and interruption state currently have process-lifetime retention; there is no retention service or distributed lease.
+
+## Delegation and push
+
+`delegationPolicy` validates explicit `a2a_invoke` intent, asynchronous submission, authenticated delegate role, and canonical `x-letta-a2a-hop` (default maximum one). The application verifies the role/header, projects its decision onto `TrustedCaller.delegation`, and uses it to withhold or deny outbound tools. Supply the returned outbound headers through the client package's **host-owned** route policy, never model arguments. This is an application policy convention, not a new A2A field. Service migration/legacy metadata convergence remains Phase 4.
+
+`createPushNotifications({ callbacks: [{ url, bearerToken }], ...bounds })` returns official `{ store, sender, close }` seams; pass the whole object as `push`. Registrations require an exact host-approved URL/Bearer pair. Redirects are rejected; retries and delivery/close waits are bounded. SDK V1 serialization, per-task ordering, and correlation events are retained. Protocol-facing create/load results redact tokens and credentials; trusted `loadWithMetadata` intentionally retains credentials for delivery. Callback URLs are public and must not embed secrets.
+
+The default push owner resolver uses the SDK user name. Through this bridge that name includes binding/issuer/subject; tenant is also scoped. When using the helper independently, provide an appropriate resolver—raw SDK anonymous users share a scope. Custom fetch/resolver implementations are trusted extensions, not sandboxed transports.
+
+`bridge.close()`/`listener.close()` are bounded and idempotent. They stop execution acceptance, request cancellation, and close supplied push resources. Results contain `complete`, pending task IDs, unresolved context IDs, and optional push cleanup status. A pending/rejected push close prevents a complete result. Without a push close hook, push cleanup remains application-owned and is not covered by that result. Repeated close returns the original assessment, not a later recovery check. Library code never exits the process.
+
+## Validation and remaining scope
 
 ```bash
 bun install --frozen-lockfile
 bun test tests
+bun run check
 bun run build
 node -e 'import("./dist/index.js").then(() => console.log("import ok"))'
 ```
 
-Build before installing Example 14's `file:` dependency. The package exports Node ESM and declarations from `dist/`; Bun is a development/test tool, not a runtime requirement. Deterministic tests use local fake SDK sessions and runners; no module mocks or live providers are needed.
+Run the root test suite for cross-package HTTP/OAuth proofs. Build both packages before refreshing Example 14's `file:` dependencies. Node ESM/declarations come from `dist/`; Bun is a development tool, not a runtime requirement.
+
+Extended cards remain explicitly disabled; the official client supports capable peers. REST/gRPC, arbitrary extensions/signatures, rich Letta input execution, service convergence, durable recovery, multi-process enforcement, broad OS/backend validation, publication, and deployment are not claimed. A durable task store alone does not make this bridge durable.

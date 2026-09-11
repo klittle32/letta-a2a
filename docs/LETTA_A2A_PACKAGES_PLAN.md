@@ -27,7 +27,7 @@ This document defines the implementation scope and release gates. Approval of th
 
 The verified Phase 0 baseline, SDK method mapping, ownership rules, and regression ownership are recorded in [the implementation contracts](LETTA_A2A_CONTRACTS.md).
 
-Progress: [Phase 0/1 checkpoint](evidence/2026-09-11-a2a-packages-phase-0-1.md), [Phase 2 client/adapter checkpoint](evidence/2026-09-11-a2a-packages-phase-2.md). Acceptance boxes below remain full-release gates, not blanket claims about these checkpoints.
+Progress: [Phase 0/1 checkpoint](evidence/2026-09-11-a2a-packages-phase-0-1.md), [Phase 2 client/adapter checkpoint](evidence/2026-09-11-a2a-packages-phase-2.md), [Phase 3 protocol/policy checkpoint](evidence/2026-09-11-a2a-packages-phase-3.md). Acceptance boxes below remain full-release gates, not blanket claims about these checkpoints. Phase 4 service convergence is next; no service migration or publication is implied by Phase 3.
 
 ## Starting assets and limitations (before implementation)
 
