@@ -1,5 +1,7 @@
 # Letta A2A client
 
+Unpublished MIT-licensed `0.1.0-alpha.1` candidate. Node 24.19.0 is the tested baseline; Bun 1.4.2 is build-only. See the [release/support guide](https://github.com/klittle32/letta-a2a/blob/main/docs/RELEASING.md) before adoption. The bundled SDK retains its own license in `THIRD_PARTY_NOTICES.md`.
+
 A lossless A2A 1.0 client library, with thin Letta Code mod and Letta Agent SDK tool adapters. Uses the official `@a2a-js/sdk` 1.1.0; imports do not start a server, create an agent, or install a mod. This is an unpublished local package under active development.
 
 ## Library

@@ -1,0 +1,57 @@
+name: Release checks
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provider-free:
+    name: Provider-free (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+
+      # Install packages first; local file dependencies need their built exports.
+      - name: Install package dependencies from frozen locks
+        run: |
+          (cd packages/letta-a2a-bridge && bun install --frozen-lockfile --ignore-scripts)
+          (cd packages/letta-a2a-client && bun install --frozen-lockfile --ignore-scripts)
+      # Must precede client build/check, which overwrite the tracked mod bundle.
+      - name: Verify committed mod bundle before any ordinary build
+        run: node scripts/release/check-bundle.mjs
+      - name: Build packages
+        run: |
+          (cd packages/letta-a2a-bridge && bun run build)
+          (cd packages/letta-a2a-client && bun run build)
+      - name: Install root and example dependencies from frozen locks
+        run: |
+          bun install --frozen-lockfile --ignore-scripts
+          (cd examples/14-typescript-letta-agent-sdk && bun install --frozen-lockfile --ignore-scripts)
+      - name: Check packages, root, and TypeScript example
+        run: |
+          (cd packages/letta-a2a-bridge && bun run check)
+          (cd packages/letta-a2a-client && bun run check)
+          bun run check
+          (cd examples/14-typescript-letta-agent-sdk && bun run check)
+      - name: Build root and run full TypeScript tests
+        run: |
+          bun run build
+          bun test
+      - name: Verify packed consumer after builds
+        run: node scripts/release/packed-consumer.mjs

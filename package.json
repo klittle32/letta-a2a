@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "release:bundle": "node scripts/release/check-bundle.mjs",
+    "release:packed": "node scripts/release/packed-consumer.mjs",
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc --noEmit",
     "integration": "node scripts/integration-a2a.mjs",

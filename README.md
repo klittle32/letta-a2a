@@ -6,7 +6,7 @@ The seven-service core and two Example 12 services run in Docker on one host. Th
 
 The completed proof and limits are summarized in [`docs/CONCLUSIONS.md`](docs/CONCLUSIONS.md). The numbered demonstrations and implementation roadmap live in [`examples/README.md`](examples/README.md).
 
-The lab service now consumes the reusable bidirectional packages. The [package plan](docs/LETTA_A2A_PACKAGES_PLAN.md) defines the remaining recovery/release work; the [implementation contracts](docs/LETTA_A2A_CONTRACTS.md) and [Phase 4 evidence](docs/evidence/2026-09-11-a2a-packages-phase-4.md) distinguish proven convergence from pending release gates.
+The lab service consumes the reusable bidirectional packages. Phase 5 adds opt-in durable recovery; Phase 6 prepares MIT-licensed `0.1.0-alpha.1` candidates, **not published releases**. See the [release/support guide](docs/RELEASING.md), [package plan](docs/LETTA_A2A_PACKAGES_PLAN.md), and [implementation contracts](docs/LETTA_A2A_CONTRACTS.md) for exact guarantees and remaining gates.
 
 ## Architecture
 
@@ -100,6 +100,8 @@ Follow the numbered learning path in [`examples/`](examples/README.md). The read
 Implemented examples are complete through Example 14. Examples 06–08 retain exact historical checkpoints because later stages intentionally replaced their security policy. Polling walkthroughs reuse `scripts/smoke-a2a.mjs`, streaming uses `curl -N` and the integration client's SSE parser, and Example 12 adds a separate profile-gated ADK/Hermes path. Example 14 is a standalone local TypeScript package and does not use the Docker lab.
 
 ## Development checks
+
+For release verification, use the [ordered release gates](docs/RELEASING.md#reproducible-build-and-tarball-gates) first: the stale committed-bundle check must precede any client build/check below.
 
 ```bash
 (cd packages/letta-a2a-client && bun install --frozen-lockfile && bun run check)

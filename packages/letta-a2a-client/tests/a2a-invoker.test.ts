@@ -395,8 +395,10 @@ test("stream reads and cancellation share the caller's absolute budget", async (
 });
 
 test("shared deadline includes prior queue delay and caps independent cleanup budget", async () => {
-  const deadline = performance.now() + 80;
-  await new Promise((resolve) => setTimeout(resolve, 35));
+  // Exercise budget sharing, not whether a loaded CI host can schedule within
+  // a 45ms remainder. A wrongly independent 500ms cleanup still exceeds this.
+  const deadline = performance.now() + 400;
+  await new Promise((resolve) => setTimeout(resolve, 125));
   let cleanupSignal: AbortSignal | undefined;
   let cleanupStarted = 0;
   const runner = new PollingA2AInvoker(
@@ -417,7 +419,7 @@ test("shared deadline includes prior queue delay and caps independent cleanup bu
   expect(cleanupStarted).toBeGreaterThan(0);
   expect(cleanupStarted).toBeLessThan(deadline);
   expect(cleanupSignal?.aborted).toBe(true);
-  expect(performance.now()).toBeLessThan(deadline + 40);
+  expect(performance.now()).toBeLessThan(deadline + 100);
 });
 
 test("expired shared deadline starts neither discovery nor cleanup", async () => {
@@ -796,7 +798,7 @@ describe("lossless invocations", () => {
         getTask: () => (++polls === 1 ? Promise.resolve(latest) : never()),
         cancelTask: async () => cancelled,
       },
-      40,
+      250,
       // This asserts successful cleanup, not a 20ms scheduler performance bound.
       // Keep the short polling timeout but tolerate concurrent build/crypto load.
       500,

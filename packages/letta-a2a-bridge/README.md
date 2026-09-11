@@ -1,5 +1,7 @@
 # letta-a2a-bridge
 
+Unpublished MIT-licensed `0.1.0-alpha.1` candidate. Node 24.19.0 is the tested baseline; Bun 1.4.2 is build-only. Real backend evidence covers SDK remote mode to Code 0.30.25 App Servers using local storage—not every local/Cloud configuration. See the [release/support guide](https://github.com/klittle32/letta-a2a/blob/main/docs/RELEASING.md).
+
 A text-only A2A 1.0 JSON-RPC/SSE bridge using `@a2a-js/sdk` **1.1.0** and `@letta-ai/letta-agent-sdk` **0.8.3**. Phase 3 adds authenticated ownership, interrupted-task continuation, subscription, push, and application policy seams. This is not yet the full package-plan release or a durable multi-tenant hosting service.
 
 ## Compose an existing agent

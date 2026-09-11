@@ -1,7 +1,16 @@
 {
   "name": "letta-a2a-client",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "private": true,
+  "description": "Governed A2A 1.0 client library with optional Letta Agent SDK and Letta Code adapters",
+  "license": "MIT",
+  "packageManager": "bun@1.4.2",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/klittle32/letta-a2a.git",
+    "directory": "packages/letta-a2a-client"
+  },
+  "bugs": "https://github.com/klittle32/letta-a2a/issues",
   "type": "module",
   "exports": {
     ".": {
@@ -20,6 +29,9 @@
   ],
   "files": [
     "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "THIRD_PARTY_NOTICES.md",
     "MOD.md",
     "dist",
     "src"
@@ -34,6 +46,7 @@
     ]
   },
   "scripts": {
+    "prepublishOnly": "node -e \"throw new Error('Publication requires separate approval; see docs/RELEASING.md')\"",
     "build": "tsc -p tsconfig.build.json && bun build mods/a2a-client.ts --target=node --format=esm --outfile=dist/a2a-client.mjs",
     "test": "bun test",
     "check": "tsc --noEmit && bun run build"
@@ -59,6 +72,6 @@
     "@letta-ai/letta-code"
   ],
   "engines": {
-    "node": ">=22.19.0"
+    "node": ">=24.19.0 <25"
   }
 }
