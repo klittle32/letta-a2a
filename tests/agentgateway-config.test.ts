@@ -34,7 +34,7 @@ describe("primary agentgateway topology", () => {
     expect(config.gateways.a2a.apiKey).toBeUndefined();
     expect(config.gateways.a2a.jwtAuth).toEqual({
       mode: "strict",
-      preserveToken: false,
+      preserveToken: true,
       issuer: "$OAUTH_ISSUER",
       audiences: ["letta-a2a-gateway"],
       jwks: { url: "http://auth-server:9000/jwks" },
@@ -67,6 +67,13 @@ describe("primary agentgateway topology", () => {
         { path: { pathPrefix: `/a2a/${target}` } },
       ]);
       expect(route.policies.a2a).toEqual({});
+      if (expected.backend === "bridge:8080") {
+        expect(route.policies.requestHeaderModifier).toBeUndefined();
+      } else {
+        expect(route.policies.requestHeaderModifier).toEqual({
+          remove: ["authorization"],
+        });
+      }
       expect(route.policies.urlRewrite.path.prefix).toBe(expected.prefix);
       expect(route.backends).toEqual([{ host: expected.backend }]);
     }
@@ -87,6 +94,12 @@ describe("primary agentgateway topology", () => {
     );
     expect(compose.services.bridge.environment.OAUTH_PUBLIC_BASE_URL).toBe(
       "http://127.0.0.1:${OAUTH_PORT:-9001}",
+    );
+    expect(compose.services.bridge.environment.OAUTH_JWKS_URL).toBe(
+      "http://auth-server:9000/jwks",
+    );
+    expect(compose.services.bridge.environment.OAUTH_AUDIENCE).toBe(
+      "letta-a2a-gateway",
     );
     expect(
       compose.services["reference-agent"].environment.OAUTH_PUBLIC_BASE_URL,

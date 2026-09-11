@@ -2,9 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   createAgentCard,
-  extractA2AResponse,
   extractMessageText,
-  extractLettaAssistantText,
   serializeAgentCard,
 } from "../services/bridge/src/mapping.js";
 
@@ -12,52 +10,13 @@ describe("A2A and Letta mapping", () => {
   test("extracts all text parts from an A2A protobuf JSON message", () => {
     expect(
       extractMessageText({
-        parts: [{ text: "hello " }, { data: { ignored: true } }, { text: "world" }],
+        parts: [
+          { text: "hello " },
+          { data: { ignored: true } },
+          { text: "world" },
+        ],
       }),
     ).toBe("hello world");
-  });
-
-  test("extracts assistant text from Letta string and content parts", () => {
-    expect(
-      extractLettaAssistantText({
-        type: "message",
-        message_type: "assistant_message",
-        content: "hello",
-      }),
-    ).toBe("hello");
-
-    expect(
-      extractLettaAssistantText({
-        type: "message",
-        message_type: "assistant_message",
-        content: [{ type: "text", text: "hello " }, { type: "text", text: "world" }],
-      }),
-    ).toBe("hello world");
-  });
-
-  test("extracts direct messages and task artifacts from A2A responses", () => {
-    expect(
-      extractA2AResponse({
-        result: {
-          message: {
-            contextId: "ctx-1",
-            parts: [{ text: "direct" }],
-          },
-        },
-      }),
-    ).toEqual({ contextId: "ctx-1", taskId: undefined, text: "direct" });
-
-    expect(
-      extractA2AResponse({
-        result: {
-          task: {
-            id: "task-1",
-            contextId: "ctx-2",
-            artifacts: [{ parts: [{ text: "artifact" }] }],
-          },
-        },
-      }),
-    ).toEqual({ contextId: "ctx-2", taskId: "task-1", text: "artifact" });
   });
 
   test("creates a version-pinned card at the mounted agent path", () => {
@@ -94,7 +53,7 @@ describe("A2A and Letta mapping", () => {
           $case: "oauth2SecurityScheme",
           value: {
             description:
-              "OAuth 2.0 client credentials enforced by agentgateway.",
+              "OAuth 2.0 client credentials verified by the bridge and agentgateway.",
             flows: {
               flow: {
                 $case: "clientCredentials",
@@ -104,7 +63,8 @@ describe("A2A and Letta mapping", () => {
                   scopes: {
                     "a2a.discover":
                       "Discover an A2A agent through the lab gateway.",
-                    "a2a.invoke": "Invoke an A2A agent through the lab gateway.",
+                    "a2a.invoke":
+                      "Invoke an A2A agent through the lab gateway.",
                   },
                 },
               },

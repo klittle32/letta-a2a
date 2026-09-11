@@ -6,7 +6,7 @@ The seven-service core and two Example 12 services run in Docker on one host. Th
 
 The completed proof and limits are summarized in [`docs/CONCLUSIONS.md`](docs/CONCLUSIONS.md). The numbered demonstrations and implementation roadmap live in [`examples/README.md`](examples/README.md).
 
-Reusable bidirectional packages are now being extracted from the lab. The [package plan](docs/LETTA_A2A_PACKAGES_PLAN.md) defines the target; the [implementation contracts](docs/LETTA_A2A_CONTRACTS.md) pin the protocol/SDK baseline and distinguish current behavior from pending release gates.
+The lab service now consumes the reusable bidirectional packages. The [package plan](docs/LETTA_A2A_PACKAGES_PLAN.md) defines the remaining recovery/release work; the [implementation contracts](docs/LETTA_A2A_CONTRACTS.md) and [Phase 4 evidence](docs/evidence/2026-09-11-a2a-packages-phase-4.md) distinguish proven convergence from pending release gates.
 
 ## Architecture
 
@@ -34,7 +34,7 @@ The seven core services are:
 
 - `agent-a`: Letta Code 0.30.25 App Server with a local backend.
 - `agent-b`: an independently persisted local Letta backend.
-- `bridge`: exposes a separate Agent Card and A2A endpoint for each Letta runtime, and registers the controller-owned `a2a_invoke` tool on both runtimes.
+- `bridge`: composes `letta-a2a-bridge` and `letta-a2a-client` through Letta Agent SDK 0.8.3 and A2A JS SDK 1.1.0. Each agent has an independent authenticated binding and session-owned delegation tools; App Servers remain pinned to 0.30.25, verified by the live matrix.
 - `reference-agent`: a non-Letta, non-LLM fixture built with the official Python `a2a-sdk`. Its exact commands exercise echo, ordered streaming, context continuity, failure, delay, and cancellation; one narrow outbound command delegates to Agent A.
 - `auth-server`: a local-only OAuth client-credentials fixture with short-lived RSA-signed JWTs, metadata, and JWKS endpoints.
 - `agentgateway`: one agentgateway v1.5.0 process, pinned by OCI digest, with path-based A2A routes, strict JWT authentication, caller-aware role/scope authorization, Agent Card rewriting, structured A2A logs, and a loopback UI.
@@ -102,9 +102,9 @@ Implemented examples are complete through Example 14. Examples 06–08 retain ex
 ## Development checks
 
 ```bash
-bun install --frozen-lockfile
 (cd packages/letta-a2a-client && bun install --frozen-lockfile && bun run check)
 (cd packages/letta-a2a-bridge && bun install --frozen-lockfile && bun run check && bun run build)
+bun install --frozen-lockfile --force
 (cd examples/14-typescript-letta-agent-sdk && bun install --frozen-lockfile && bun run check)
 (cd services/reference-agent && uv sync --frozen)
 (cd services/google-adk-agent && uv sync --frozen)
@@ -115,7 +115,7 @@ bun run build
 bun run test:compose
 ```
 
-Build the bridge before installing Example 14's local file dependency. After rebuilding an already-installed bridge, refresh the example's copy with `bun install --frozen-lockfile --force` in its directory. The bridge's `check` includes both source and test type-checking; root `bun test` discovers the lab, package, and example tests.
+Build both packages before installing root or Example 14 local file dependencies. After rebuilding them, refresh installed copies with `bun install --frozen-lockfile --force` in the root and example. The Docker build performs these steps inside the image using Bun 1.4.2; it does not depend on host build output. The bridge's `check` includes source and test type-checking; root `bun test` discovers the lab, package, and example tests.
 
 Unit tests cover configuration and gateway-route validation, OAuth issuance and token caching, protocol text mapping, safe Letta stream projection, ordered artifact publication, push registration and delivery policy, duplicate-safe callback receipt, durable A2A-context mappings, Agent Card construction, delegation hop policy, both outbound A2A client paths, and the reference agent's deterministic command surface.
 
@@ -139,19 +139,21 @@ Example 13 is intentionally just installation instructions plus a small skill th
 
 Example 14 is an intentionally small TypeScript composition of the official A2A client/server and Letta Agent SDK. It demonstrates the `AgentExecutor` boundary directly without requiring Rust, Docker, agentgateway, OAuth, or A2A 0.3 compatibility. See [`examples/14-typescript-letta-agent-sdk/`](examples/14-typescript-letta-agent-sdk/).
 
-[`letta-a2a-client`](packages/letta-a2a-client/) now supplies a lossless typed client library and shared `a2a_invoke`/`a2a_task` tools through a Letta Code mod or session-owned Agent SDK adapter. Example 14 consumes both packages, including SDK-to-SDK delegation without a global mod. Client gateway/OAuth policy and broader bridge capabilities remain later plan work.
+[`letta-a2a-client`](packages/letta-a2a-client/) supplies a lossless typed client library and shared `a2a_invoke`/`a2a_task` tools through a Letta Code mod or session-owned SDK adapter. Example 14 and the mature service consume the packages. The service retains a small lab-compatible `a2a_invoke` adapter, OAuth provider, Agent Card configuration, and legacy hop-metadata translation; handwritten polling, executor, push, and raw App Server turn loops are removed.
 
 The Example 12 provider-free check uses its real ADK/A2A containers with a fake model and a dedicated Hermes OAuth identity, but does not start Hermes. Its opt-in live check invokes the stock Hermes `a2a_call` tool twice against a live ADK model and verifies Hermes audit plus gateway/ADK correlation. The interactive TUI walkthrough remains under [`examples/12-hermes-tui-to-google-adk/`](examples/12-hermes-tui-to-google-adk/).
 
 ## Persistence and reset
 
-Ordinary restart preserves the volume-backed agents, conversations, workspaces, and bridge context mappings:
+Ordinary restart preserves volume-backed agents, conversations, workspaces, and owner-scoped idle conversation mappings:
 
 ```bash
 docker compose restart
 ```
 
 Restarting the bridge or reference agent loses that service's in-memory A2A task records and push registrations. Restarting the reference agent also loses its deterministic context memory; restarting the webhook receiver loses its observation ledger.
+
+Pre-convergence mapping entries had no caller identity. They remain on disk but are **not automatically assigned to a new authenticated caller**. New keys include binding/issuer/subject/tenant. An operator must establish ownership before any deliberate legacy migration; no migration or data deletion runs at startup. Saved conversation IDs do not prove active-task crash recovery: reconcile interrupted/uncertain work before replay. Phase 5 will address that boundary.
 
 Stop without deleting persistent volume state:
 
@@ -176,10 +178,10 @@ The reset command additionally deletes both local Letta agents, their conversati
 - Active task state uses each A2A SDK's in-memory task store. Letta conversation mappings survive bridge restarts, but historical `GetTask` records do not yet. The reference agent intentionally loses tasks and context memory on restart.
 - Signed Agent Cards and production multi-tenant caller identity are deferred. Binary file transfer is deliberately out of scope for this reference repository.
 - Each conversation permits one active Letta turn. Concurrent messages to one A2A context are serialized.
-- Delegation is opt-in per turn: the request must explicitly mention `a2a_invoke`. Nested calls carry a hop count, and `MAX_A2A_HOPS=1` prevents accidental agent ping-pong loops. Missing, malformed, fractional, or negative hop metadata normalizes to zero; this is a loop guard, not an authentication boundary.
+- Delegation is opt-in per turn: the request must explicitly mention `a2a_invoke` and use asynchronous submission. A verified `agent` role must carry a positive canonical hop; `MAX_A2A_HOPS=1` prevents further delegation. Legacy `metadata.lettaA2aLab.hop` is supported for Python compatibility and must agree with the protected `x-letta-a2a-hop` header when both exist. Invalid or reset hops reject rather than normalizing to zero. Ordinary operators cannot impersonate a delegated caller.
 - Canceling an outer Letta task aborts active outbound A2A polling, sends a bounded best-effort `CancelTask` to an accepted remote child, and then aborts the local App Server turn. Tasks canceled while waiting on a conversation lock never start a Letta runtime.
-- Letta turns run in `unrestricted` permission mode because the headless App Server has no human approval channel. The per-turn allowlist is empty for ordinary calls and contains only the scoped, controller-owned `a2a_invoke` tool for explicit delegation requests.
-- The A2A listener validates short-lived OAuth JWTs against the local authorization server's issuer, audience, and JWKS. Agent Card discovery requires `a2a.discover`; JSON-RPC invocation requires `a2a.invoke` plus an issuer-assigned `operator` or `agent` role.
+- Letta turns use strict SDK session permissions and no base tools. Only verified delegation exposes/allows the connection-owned `a2a_invoke`; each turn separately checks the agent's persisted tool inventory without stripping tools. Agent creation supplies only supported creation options—not session-only allowlists or approval callbacks.
+- Both gateway and bridge validate short-lived OAuth JWTs. The gateway preserves the token for independent bridge verification, including direct requests. Bridge issuer defaults to `OAUTH_PUBLIC_BASE_URL`; `OAUTH_JWKS_URL` points to the internal issuer and `OAUTH_AUDIENCE` defaults to `letta-a2a-gateway`. Required claims and the singular role policy match the gateway. Discovery requires `a2a.discover`; RPCs require `a2a.invoke` plus `operator` or `agent`. Scopes remain request-local, including simultaneous tokens for one subject.
 - Agentgateway emits useful A2A telemetry to structured stdout. Its UI log search returned no stored A2A rows during evaluation, so this lab does not treat the UI as an A2A audit store.
 - The shell operator, bridge, reference agent, OAuth observer, and denied invoker use distinct disposable identities. The denied invoker intentionally has `a2a.invoke` but an untrusted role, proving that scope possession alone does not authorize a request. Push delivery and receiver observation use two additional fixed lab-only Bearer credentials.
 - The authorization server is an in-memory test fixture, and the lab uses plain HTTP on host loopback and its private Compose network. Default credentials are fixed lab-only values. Do not reuse this Compose file unchanged for a shared or production environment.

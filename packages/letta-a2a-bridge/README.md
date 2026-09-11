@@ -46,6 +46,10 @@ See [`tests/packages-phase3.test.ts`](../../tests/packages-phase3.test.ts) for e
 
 `createBridge` returns a policy-guarded official-handler facade, executor, card, and asynchronous `close`. The SDK owns protocol serialization, task history/artifacts, task/list filtering, and push RPCs. The default task store is in-memory.
 
+`createBridgeRouter(bridge, options?)` exposes the same policy-aware Express composition for application-owned mount paths/listeners. `listenLoopback` consumes it. Custom hosts own socket/TLS policy and must not expose the shared anonymous profile to untrusted callers.
+
+`AgentSdkTurnRunner` optionally accepts `policy.conversationMapping.get/set`. The runner passes only its owner-scoped key, awaits reads/writes inside serialization, and persists the ready conversation ID before submission. The default remains in-memory. A custom mapping adapter is trusted; saved IDs support idle continuity, not task recovery or safe replay after a crash. Persistence failures do not release still-running work early.
+
 - Text-only input/output is declared; unsupported or mixed input fails with a protocol media error before execution.
 - `contextId` starts a new task in that caller's conversation. `taskId` resumes only an explicitly settled input/auth interruption. Active, terminal, duplicate, conflicting-context, or unknown-recovery execution rejects before dispatch.
 - Trusted custom runners return `{ text, state: "input_required" | "auth_required", detail? }` only after execution has settled. `detail` is public. Assistant prose never creates an interruption. The default SDK runner does not reinterpret pending tool approval as safely resumable execution.
@@ -77,4 +81,4 @@ node -e 'import("./dist/index.js").then(() => console.log("import ok"))'
 
 Run the root test suite for cross-package HTTP/OAuth proofs. Build both packages before refreshing Example 14's `file:` dependencies. Node ESM/declarations come from `dist/`; Bun is a development tool, not a runtime requirement.
 
-Extended cards remain explicitly disabled; the official client supports capable peers. REST/gRPC, arbitrary extensions/signatures, rich Letta input execution, service convergence, durable recovery, multi-process enforcement, broad OS/backend validation, publication, and deployment are not claimed. A durable task store alone does not make this bridge durable.
+Extended cards remain explicitly disabled; the official client supports capable peers. The lab service now consumes these packages; see the root Phase 4 evidence. REST/gRPC, arbitrary extensions/signatures, rich Letta input execution, durable recovery, multi-process enforcement, broad OS/backend validation, publication, and production deployment are not claimed. A durable task store alone does not make this bridge durable.

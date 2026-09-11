@@ -1,257 +1,403 @@
-import { describe, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
+import type {
+  LettaAgentClient,
+  CreateSessionOptions,
+} from "@letta-ai/letta-agent-sdk";
+import { WebSocketServer } from "ws";
+import { once } from "node:events";
+import { LettaRuntime } from "../services/bridge/src/letta-runtime.js";
+import type { ContextStore } from "../services/bridge/src/context-store.js";
+import type { LettaTurnRequest } from "letta-a2a-bridge";
 
-import {
-  LettaRuntime,
-  LettaTurnCancelledError,
-} from "../services/bridge/src/letta-runtime.js";
-
-describe("LettaRuntime cancellation", () => {
-  test("cancels a task while it is queued on a conversation lock", async () => {
-    const runtime = new LettaRuntime(
-      {
-        key: "agent-a",
-        displayName: "Agent A",
-        appServerUrl: "ws://agent-a/ws",
-        appServerToken: "token",
+function fixture(
+  options: {
+    timeoutMs?: number;
+    existing?: boolean;
+    tools?: unknown[];
+    invoke?: (...args: any[]) => Promise<any>;
+    stream?: () => AsyncGenerator<any>;
+  } = {},
+) {
+  const sessions: CreateSessionOptions[] = [];
+  const opened: string[] = [];
+  const created: unknown[] = [];
+  const clients: unknown[] = [];
+  const events: string[] = [];
+  const mappings = new Map<string, string>();
+  const open = (id: string, policy: CreateSessionOptions) => {
+    sessions.push(policy);
+    opened.push(id);
+    return {
+      async ready() {
+        return { conversationId: "conv-ready" };
       },
-      null as never,
-      "test-model",
-      30_000,
-      {},
-      { getAccessToken: async () => "oauth-access-token" },
-      1,
-    );
-
-    const entered: string[] = [];
-    let releaseFirst!: () => void;
-    const firstGate = new Promise<void>((resolve) => {
-      releaseFirst = resolve;
-    });
-    (runtime as any).runTurnUnlocked = async (options: {
-      a2aTaskId: string;
-    }) => {
-      entered.push(options.a2aTaskId);
-      if (options.a2aTaskId === "task-1") await firstGate;
-      return options.a2aTaskId;
-    };
-
-    const first = runtime.runTurn(turn("task-1"));
-    await waitUntil(() => entered.includes("task-1"));
-    const queued = runtime.runTurn(turn("task-2"));
-    const queuedOutcome = queued.then(
-      (value) => value,
-      (error) => error,
-    );
-
-    await runtime.cancelTask("task-2");
-    expect(await queuedOutcome).toBeInstanceOf(LettaTurnCancelledError);
-    expect(entered).toEqual(["task-1"]);
-
-    releaseFirst();
-    await expect(first).resolves.toBe("task-1");
-    runtime.claimTerminal("task-1", "completed");
-    runtime.claimTerminal("task-2", "canceled");
-  });
-
-  test("uses one atomic winner for cancellation versus completion", async () => {
-    const runtime = createRuntime();
-    (runtime as any).runTurnUnlocked = async () => "done";
-
-    await expect(runtime.runTurn(turn("cancel-wins"))).resolves.toBe("done");
-    await runtime.cancelTask("cancel-wins");
-    expect(runtime.claimTerminal("cancel-wins", "completed")).toBe("canceled");
-
-    await expect(runtime.runTurn(turn("complete-wins"))).resolves.toBe("done");
-    expect(runtime.claimTerminal("complete-wins", "completed")).toBe(
-      "completed",
-    );
-    await runtime.cancelTask("complete-wins");
-    expect(runtime.claimTerminal("complete-wins", "failed")).toBe(
-      "completed",
-    );
-    expect(runtime.claimTerminal("complete-wins", "canceled")).toBe(
-      "completed",
-    );
-  });
-
-  test("holds the conversation lock until an aborted runtime terminates", async () => {
-    const runtime = createRuntime();
-    const runtimeScope = {
-      agent_id: "agent-id",
-      conversation_id: "conversation-id",
-    };
-    const handlers = new Set<(message: any) => void>();
-    let runtimeStarts = 0;
-    const client = {
-      runtimeStart: async () => {
-        runtimeStarts += 1;
-        return { success: true, runtime: runtimeScope };
+      async send() {
+        events.push("send");
       },
-      onMessage: (handler: (message: any) => void) => {
-        handlers.add(handler);
-        return () => handlers.delete(handler);
+      async abort() {
+        events.push("abort");
       },
-      submitInput: async () => ({ accepted: true }),
-      abort: async () => ({ aborted: true }),
-    };
-    (runtime as any).client = client;
-    (runtime as any).agentId = "agent-id";
-    (runtime as any).contextStore = {
-      get: () => "conversation-id",
-      save: () => undefined,
-    };
-
-    const first = runtime.runTurn(turn("task-1"));
-    const firstOutcome = first.then(
-      (value) => value,
-      (error) => error,
-    );
-    await waitUntil(() => runtimeStarts === 1);
-    await runtime.cancelTask("task-1");
-
-    const second = runtime.runTurn(turn("task-2"));
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(runtimeStarts).toBe(1);
-
-    emit(handlers, { type: "turn_finished", runtime: runtimeScope });
-    expect(await firstOutcome).toBeInstanceOf(LettaTurnCancelledError);
-    runtime.claimTerminal("task-1", "canceled");
-
-    await waitUntil(() => runtimeStarts === 2);
-    emit(handlers, { type: "turn_finished", runtime: runtimeScope });
-    await expect(second).resolves.toBe("");
-    runtime.claimTerminal("task-2", "completed");
-  });
-
-  test("emits only top-level assistant text as public output chunks", async () => {
-    const runtime = createRuntime();
-    const runtimeScope = {
-      agent_id: "agent-id",
-      conversation_id: "conversation-id",
-    };
-    const handlers = new Set<(message: any) => void>();
-    (runtime as any).client = {
-      runtimeStart: async () => ({ success: true, runtime: runtimeScope }),
-      onMessage: (handler: (message: any) => void) => {
-        handlers.add(handler);
-        return () => handlers.delete(handler);
+      stream:
+        options.stream ??
+        async function* () {
+          yield { type: "assistant", content: "hello" };
+          yield { type: "result", success: true, result: "hello" };
+        },
+      async [Symbol.asyncDispose]() {
+        events.push("disposed");
       },
-      submitInput: async () => ({ accepted: true }),
-      abort: async () => ({ aborted: true }),
     };
-    (runtime as any).agentId = "agent-id";
-    (runtime as any).contextStore = {
-      get: () => "conversation-id",
-      save: () => undefined,
-    };
-    const chunks: string[] = [];
-    const outcome = runtime.runTurn({
-      ...turn("stream-task"),
-      onAssistantDelta: (text) => chunks.push(text),
-    });
-    await waitUntil(() => handlers.size === 1);
-
-    emit(handlers, streamDelta(runtimeScope, "reasoning_message", "PRIVATE_REASONING"));
-    emit(handlers, {
-      ...streamDelta(runtimeScope, "assistant_message", "PRIVATE_SUBAGENT"),
-      subagent_id: "subagent-1",
-    });
-    const nestedSubagent = streamDelta(
-      runtimeScope,
-      "assistant_message",
-      "PRIVATE_NESTED_SUBAGENT",
-    );
-    (nestedSubagent.delta as Record<string, unknown>).subagent_id = "subagent-2";
-    emit(handlers, nestedSubagent);
-    emit(handlers, {
-      type: "stream_delta",
-      runtime: runtimeScope,
-      delta: {
-        message_type: "client_tool_start",
-        tool_args: "PRIVATE_TOOL_ARGUMENTS",
+  };
+  const client = {
+    agents: {
+      async list() {
+        return options.existing === false
+          ? []
+          : [{ id: "agent-id", name: "Agent A" }];
       },
-    });
-    emit(
-      handlers,
-      streamDelta(runtimeScope, "tool_return_message", "PRIVATE_TOOL_RESULT"),
-    );
-    emit(handlers, {
-      type: "stream_delta",
-      runtime: runtimeScope,
-      delta: {
-        message_type: "command_end",
-        input: "PRIVATE_COMMAND_INPUT",
-        output: "PRIVATE_COMMAND_OUTPUT",
+      async retrieve() {
+        events.push("guard");
+        return { id: "agent-id", tools: options.tools ?? [] };
       },
-    });
-    emit(
-      handlers,
-      streamDelta(runtimeScope, "future_private_event", "PRIVATE_UNKNOWN"),
-    );
-    emit(handlers, streamDelta(runtimeScope, "assistant_message", "  SAFE_ "));
-    emit(handlers, streamDelta(runtimeScope, "assistant_message", "STREAM  "));
-    emit(handlers, { type: "turn_finished", runtime: runtimeScope });
-
-    await expect(outcome).resolves.toBe("SAFE_ STREAM");
-    expect(chunks).toEqual(["SAFE_", " STREAM"]);
-    expect(JSON.stringify(chunks)).not.toContain("PRIVATE_");
-  });
-});
-
-function createRuntime(): LettaRuntime {
-  return new LettaRuntime(
+    },
+    async createAgent(policy: unknown) {
+      created.push(policy);
+      return "agent-id";
+    },
+    createSession: open,
+    resumeSession: open,
+  } as unknown as LettaAgentClient;
+  const runtime = new LettaRuntime(
     {
       key: "agent-a",
       displayName: "Agent A",
       appServerUrl: "ws://agent-a/ws",
-      appServerToken: "token",
+      appServerToken: "secret",
     },
-    null as never,
+    {
+      get: (_agent: string, key: string) => mappings.get(key),
+      save: (_agent: string, key: string, value: string) => {
+        mappings.set(key, value);
+      },
+    } as ContextStore,
     "test-model",
-    30_000,
+    options.timeoutMs ?? 30_000,
+    { "agent-b": "https://gateway/agent-b" },
+    { getAccessToken: async () => "oauth" },
+    2,
+    {
+      createClient: (settings) => {
+        clients.push(settings);
+        return client;
+      },
+      invoke: options.invoke,
+    },
+  );
+  return { runtime, sessions, opened, created, clients, events, mappings };
+}
+function request(overrides: Partial<LettaTurnRequest> = {}): LettaTurnRequest {
+  return {
+    a2aContextId: "owned-context",
+    messageId: "message",
+    text: "hello",
+    signal: new AbortController().signal,
+    onAssistantText() {},
+    caller: {
+      issuer: "issuer",
+      subject: "subject",
+      tenant: "tenant",
+      delegation: { hop: 0, allowDelegation: true },
+    },
+    ...overrides,
+  };
+}
+
+test("uses public remote backend auth and explicit fresh-agent policy", async () => {
+  const f = fixture({ existing: false });
+  await f.runtime.connect();
+  expect(f.clients[0]).toMatchObject({
+    backend: "remote",
+    url: "ws://agent-a/ws",
+    authToken: "secret",
+  });
+  expect(f.created[0]).toMatchObject({
+    name: "Agent A",
+    model: "test-model",
+    baseTools: [],
+    memfs: false,
+  });
+  expect(f.runtime.definition.key).toBe("agent-a");
+  await f.runtime.runTurn(request());
+  expect(f.events[0]).toBe("guard");
+});
+
+test("real SDK accepts fresh-agent options before sending runtime_start", async () => {
+  // Exercise the pinned public SDK, not a fake createAgent that accepts every option.
+  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await once(server, "listening");
+  const address = server.address();
+  if (!address || typeof address === "string")
+    throw new Error("Missing fixture port");
+  const commands: Record<string, any>[] = [];
+  server.on("connection", (socket) => {
+    socket.on("message", (data) => {
+      const command = JSON.parse(data.toString());
+      commands.push(command);
+      if (command.type === "agent_list") {
+        socket.send(
+          JSON.stringify({
+            type: "agent_list_response",
+            request_id: command.request_id,
+            success: true,
+            agents: [],
+          }),
+        );
+      } else if (command.type === "runtime_start") {
+        socket.send(
+          JSON.stringify({
+            type: "runtime_start_response",
+            request_id: command.request_id,
+            success: true,
+            runtime: { agent_id: "agent-probe", conversation_id: "conv-probe" },
+            agent: { id: "agent-probe", tools: [], model: "test-model" },
+          }),
+        );
+      }
+    });
+  });
+  const runtime = new LettaRuntime(
+    {
+      key: "probe",
+      displayName: "Probe",
+      appServerUrl: `ws://127.0.0.1:${address.port}`,
+      appServerToken: "fixture-only",
+    },
+    { get: () => undefined, save() {} } as unknown as ContextStore,
+    "openai/gpt-4.1-nano",
+    1000,
     {},
-    { getAccessToken: async () => "oauth-access-token" },
+    { getAccessToken: async () => "fixture-only" },
     1,
   );
-}
-
-function turn(a2aTaskId: string) {
-  return {
-    a2aContextId: "shared-context",
-    a2aTaskId,
-    messageId: `message-${a2aTaskId}`,
-    text: "hello",
-    hop: 0,
-  };
-}
-
-async function waitUntil(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 1));
+  try {
+    await runtime.connect();
+    const start = commands.find((command) => command.type === "runtime_start");
+    expect(start?.create_agent).toMatchObject({
+      memfs: false,
+      body: {
+        name: "Probe",
+        model: "openai/gpt-4.1-nano",
+        include_base_tools: false,
+      },
+    });
+  } finally {
+    await runtime.close();
+    // SDK 0.8.3 exposes no management close; the fixture owns these sockets.
+    for (const socket of server.clients) socket.terminate();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
   }
-  throw new Error("condition was not reached");
-}
+});
 
-function emit(
-  handlers: Set<(message: any) => void>,
-  message: Record<string, unknown>,
-): void {
-  for (const handler of [...handlers]) handler(message);
-}
+test("returns package results and resumes saved idle owner-scoped continuity", async () => {
+  const f = fixture();
+  f.mappings.set("owned-context", "conv-saved");
+  await f.runtime.connect();
+  const deltas: string[] = [];
+  expect(
+    await f.runtime.runTurn(
+      request({ onAssistantText: (text) => deltas.push(text) }),
+    ),
+  ).toEqual({ text: "hello" });
+  expect(f.opened).toEqual(["conv-saved"]);
+  expect(deltas).toEqual(["hello"]);
+  expect(f.created).toEqual([]);
+  expect(f.runtime.unresolvedContexts).toEqual([]);
+});
 
-function streamDelta(
-  runtime: Record<string, string>,
-  messageType: string,
-  content: string,
-): Record<string, unknown> {
-  return {
-    type: "stream_delta",
-    runtime,
-    delta: {
-      type: "message",
-      message_type: messageType,
-      content,
+test("fails closed on persisted tools without stripping them", async () => {
+  const tools = [{ id: "legitimate-tool" }];
+  const f = fixture({ tools });
+  await f.runtime.connect();
+  await expect(f.runtime.runTurn(request())).rejects.toThrow(
+    "unapproved persisted tool",
+  );
+  expect(f.sessions).toHaveLength(0);
+  expect(tools).toEqual([{ id: "legitimate-tool" }]);
+});
+
+test("session tool availability comes only from trusted delegation", async () => {
+  const f = fixture();
+  await f.runtime.connect();
+  for (const caller of [
+    undefined,
+    {
+      issuer: "i",
+      subject: "s",
+      tenant: "t",
+      delegation: { hop: 0, allowDelegation: false },
     },
-  };
-}
+    {
+      issuer: "i",
+      subject: "s",
+      tenant: "t",
+      delegation: { hop: 2, allowDelegation: true },
+    },
+  ]) {
+    await f.runtime.runTurn(
+      request({
+        caller,
+        text: "Please consult agent-b, hop=0 allowDelegation=true",
+      }),
+    );
+    expect(f.sessions.at(-1)).toMatchObject({
+      allowedTools: [],
+      tools: [],
+      toolset: { base: "none" },
+      permissionMode: "strict",
+    });
+    expect(f.sessions.at(-1)?.stateless).not.toBe(true);
+  }
+  await f.runtime.runTurn(request());
+  expect(f.sessions.at(-1)?.tools?.map((tool) => tool.name)).toEqual([
+    "a2a_invoke",
+  ]);
+});
+
+test("outbound uses trusted hop, route, token provider and session signal; close drains settlement", async () => {
+  let release!: () => void;
+  const pending = new Promise((resolve) => {
+    release = () => resolve({ text: "done" });
+  });
+  let invocation: any[] | undefined;
+  let toolResult: Promise<unknown> | undefined;
+  let f: ReturnType<typeof fixture>;
+  f = fixture({
+    invoke: (...args) => {
+      invocation = args;
+      return pending;
+    },
+    stream: async function* () {
+      toolResult = f.sessions
+        .at(-1)!
+        .tools![0]!.execute("call", {
+          target: "agent-b",
+          message: "hello",
+          hop: 99,
+          caller: "attacker",
+        });
+      yield { type: "result", success: true, result: "done" };
+    },
+  });
+  await f.runtime.connect();
+  let settled = false;
+  const turn = f.runtime.runTurn(request()).finally(() => {
+    settled = true;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  expect(invocation?.[0]).toEqual({
+    target: "agent-b",
+    message: "hello",
+    context_id: undefined,
+    hop: 1,
+  });
+  expect(invocation?.[1]).toMatchObject({
+    gatewayUrl: "https://gateway/agent-b",
+  });
+  expect(await invocation?.[1].tokenProvider.getAccessToken()).toBe("oauth");
+  expect(invocation?.[3].aborted).toBe(true);
+  expect(settled).toBe(false);
+  release();
+  await turn;
+  await toolResult;
+});
+
+test("timeout requests abort but retains ownership until the stream settles", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const f = fixture({
+    timeoutMs: 10,
+    stream: async function* () {
+      await gate;
+      throw new Error("uncertain transport termination");
+    },
+  });
+  await f.runtime.connect();
+  let settled = false;
+  const result = f.runtime
+    .runTurn(request())
+    .catch((error) => error)
+    .finally(() => {
+      settled = true;
+    });
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  expect(f.events).toContain("abort");
+  expect(settled).toBe(false);
+  release();
+  expect((await result).message).toBe("uncertain transport termination");
+  expect(f.runtime.unresolvedContexts).toEqual(["owned-context"]);
+});
+
+test("queued cancellation never opens a session and does not release the predecessor", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const f = fixture({
+    stream: async function* () {
+      await gate;
+      yield { type: "result", success: true, result: "done" };
+    },
+  });
+  await f.runtime.connect();
+  const first = f.runtime.runTurn(request());
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const controller = new AbortController();
+  const queued = f.runtime
+    .runTurn(request({ signal: controller.signal }))
+    .catch((error) => error);
+  controller.abort();
+  expect((await queued).name).toBe("LettaTurnCancelledError");
+  const third = f.runtime.runTurn(request());
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  expect(f.sessions).toHaveLength(1);
+  release();
+  await Promise.all([first, third]);
+  expect(f.sessions).toHaveLength(2);
+});
+
+test("closed session tools cannot issue late calls or use unconfigured gateway input", async () => {
+  let calls = 0;
+  const f = fixture({
+    invoke: async () => {
+      calls++;
+      return {};
+    },
+  });
+  await f.runtime.connect();
+  await f.runtime.runTurn(request());
+  await expect(
+    f.sessions[0]!.tools![0]!.execute("late", {
+      target: "agent-b",
+      message: "hello",
+    }),
+  ).rejects.toThrow("closed");
+  expect(calls).toBe(0);
+  await f.runtime.close();
+  await expect(f.runtime.runTurn(request())).rejects.toThrow("closed");
+});
+
+test("uncertain streams quarantine context rather than claiming cancellation", async () => {
+  const f = fixture({
+    stream: async function* () {
+      throw new Error("disconnect");
+    },
+  });
+  await f.runtime.connect();
+  await expect(f.runtime.runTurn(request())).rejects.toThrow("disconnect");
+  expect(f.runtime.unresolvedContexts).toEqual(["owned-context"]);
+  await expect(f.runtime.runTurn(request())).rejects.toThrow("reconciliation");
+});

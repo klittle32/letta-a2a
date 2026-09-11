@@ -9,7 +9,7 @@ Implementation baseline for [the package plan](LETTA_A2A_PACKAGES_PLAN.md). This
 | Protocol | A2A `v1.0.0`, commit `173695755607e884aa9acf8ce4feed90e32727a1` | JSON-RPC + SSE; later protocol revisions require an explicit compatibility review |
 | Package A2A SDK | `@a2a-js/sdk` `1.1.0`, upstream tag commit `eeffd69c983b6501cac912c693b69c034977455c` | Already pinned in the client package and Example 14 |
 | Letta Agent SDK | `@letta-ai/letta-agent-sdk` `0.8.3` | Already pinned in Example 14; its local runtime dependency is Letta Code `0.31.7` |
-| Existing Docker lab | A2A JS SDK `1.0.1`; Letta Code `0.30.25` | Leave unchanged during initial extraction; convergence must prove compatibility rather than silently upgrading the lab |
+| Converged Docker lab | A2A JS SDK `1.1.0`; Letta Agent SDK `0.8.3`; App Servers `0.30.25` | Phase 4 proved remote compatibility without upgrading the App Servers; root consumes both packages |
 | Initial local validation | macOS, Node.js `24.19.0`, Bun `1.4.2` | Package engine floor is not evidence of testing every supported version or OS |
 
 Frozen lockfiles remain authoritative for transitive dependencies. New package exports must run under ordinary Node.js, not require Bun at runtime. Broader Node/OS/backend proof belongs to release preparation.
@@ -91,7 +91,7 @@ Letta's SDK documentation states that missed events are not replayed and success
 | Partial artifact output masks failure/input/auth message | Phase 0 | Packaged-client regression; retain separate `statusMessage` |
 | Mixed text plus data/raw/URL content silently partially executes | Phase 0 | Strict text-extraction tests; package-level rejection/no-turn tests during extraction |
 | Input/auth interruptions classified as terminal | Phase 0 terminology, Phase 2 continuation | Stop polling without remote cancellation; client same-task followup is explicit |
-| Lab client polls interrupted tasks until timeout | Phase 4 convergence | Keep explicit as a current lab limitation; replace through the tested package rather than grow another result API |
+| Lab client previously polled interrupted tasks until timeout | Resolved in Phase 4 | Service uses the package invoker and returns input/auth status plus continuation identity; no duplicate polling loop |
 | Lossless typed client results, same-task follow-up, discovery timeout | Phase 2 | Typed core and shared adapters; see Phase 2 evidence for exercised cases |
 | Task/list/subscription/ownership and media error matrix | Phase 3 | Package regressions and root direct-HTTP/OAuth fixture; see Phase 3 evidence for limits |
 | Restart, ambiguous cancellation, persistence ordering | Phase 5 | Fault-injection tests; safe unresolved recovery is acceptable where certainty is unavailable |
@@ -121,3 +121,11 @@ This contract intentionally precedes a stable public package API. It fixes seman
 - Extended cards remain explicitly unadvertised on the bridge; the client supports capable peers. Text is the only executable bridge media profile. These tests do not establish full release, durable recovery, service convergence, or broad platform coverage.
 
 Evidence: [Phase 3 checkpoint](evidence/2026-09-11-a2a-packages-phase-3.md).
+
+## Phase 4 service convergence
+
+- The mature service and Example 14 consume the packages. The service retains application bootstrap, cards, OAuth/JWKS, lab metadata translation, and idle mapping storage—not another executor, push sender, polling implementation, or raw App Server turn loop.
+- Authenticated bindings independently verify incoming JWTs and enforce owner isolation. Required claims, scopes, and singular-role policy match the gateway. Tokens are forwarded only to bridge routes that need independent verification; reference/ADK routes explicitly remove Authorization.
+- Conversation mapping adapters run inside the SDK runner's serialization boundary and persist ready IDs before submission. Old unowned service mappings remain untouched but are not automatically adopted. This is idle continuity, not crash recovery.
+- Session tool policy is strict, connection-owned, and checked against persisted inventory. Remote `createAgent` receives only supported creation fields. SDK 0.8.3 and Code 0.30.25 interoperability passed the real provider-backed matrix.
+- Detailed commands, regressions, limits, and review: [Phase 4 evidence](evidence/2026-09-11-a2a-packages-phase-4.md). Phase 3's historical statement that its tests alone did not establish convergence still applies to that checkpoint; Phase 4 supplies the later evidence.

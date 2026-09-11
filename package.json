@@ -17,9 +17,12 @@
     "test:compose": "OPENAI_API_KEY=sk-compose-validation docker compose config --quiet"
   },
   "dependencies": {
-    "@a2a-js/sdk": "1.0.1",
-    "@letta-ai/letta-code": "0.30.25",
+    "@a2a-js/sdk": "1.1.0",
+    "@letta-ai/letta-agent-sdk": "0.8.3",
     "express": "5.1.0",
+    "jose": "6.2.9",
+    "letta-a2a-bridge": "file:packages/letta-a2a-bridge",
+    "letta-a2a-client": "file:packages/letta-a2a-client",
     "ws": "8.18.3"
   },
   "devDependencies": {

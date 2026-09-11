@@ -1,5 +1,6 @@
 export {
   createBridge,
+  createBridgeRouter,
   listenLoopback,
   type Bridge,
   type CreateBridgeOptions,

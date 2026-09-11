@@ -446,17 +446,16 @@ class BridgeRequestHandler implements A2ARequestHandler {
   }
 }
 
-/** The convenience listener intentionally offers no non-loopback host option. */
-export async function listenLoopback(
+/** Mount the same guarded SDK transport at an application-owned path. */
+export function createBridgeRouter(
   bridge: Bridge,
-  options: { port?: number } = {},
+  options: { legacyCompat?: { enabled: boolean } } = {},
 ) {
   if (bridge.authenticated && !bridge.transport)
     throw new Error(
       "Authenticated listener requires trusted transport userBuilder/middleware composition",
     );
-  const app = express();
-  app.disable("x-powered-by");
+  const app = express.Router();
   for (const middleware of bridge.transport?.middleware ?? [])
     app.use(middleware);
   const userBuilder =
@@ -511,7 +510,21 @@ export async function listenLoopback(
     deleteTaskPushNotificationConfig:
       handler.deleteTaskPushNotificationConfig.bind(handler),
   };
-  app.use("/", jsonRpcHandler({ requestHandler: rpcHandler, userBuilder }));
+  app.use(
+    "/",
+    jsonRpcHandler({ requestHandler: rpcHandler, userBuilder, ...options }),
+  );
+  return app;
+}
+
+/** The convenience listener intentionally offers no non-loopback host option. */
+export async function listenLoopback(
+  bridge: Bridge,
+  options: { port?: number } = {},
+) {
+  const app = express();
+  app.disable("x-powered-by");
+  app.use(createBridgeRouter(bridge));
   const server = app.listen(options.port ?? 0, "127.0.0.1");
   await new Promise<void>((resolve, reject) => {
     server.once("listening", resolve);

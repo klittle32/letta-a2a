@@ -27,7 +27,7 @@ This document defines the implementation scope and release gates. Approval of th
 
 The verified Phase 0 baseline, SDK method mapping, ownership rules, and regression ownership are recorded in [the implementation contracts](LETTA_A2A_CONTRACTS.md).
 
-Progress: [Phase 0/1 checkpoint](evidence/2026-09-11-a2a-packages-phase-0-1.md), [Phase 2 client/adapter checkpoint](evidence/2026-09-11-a2a-packages-phase-2.md), [Phase 3 protocol/policy checkpoint](evidence/2026-09-11-a2a-packages-phase-3.md). Acceptance boxes below remain full-release gates, not blanket claims about these checkpoints. Phase 4 service convergence is next; no service migration or publication is implied by Phase 3.
+Progress: [Phase 0/1 checkpoint](evidence/2026-09-11-a2a-packages-phase-0-1.md), [Phase 2 client/adapter checkpoint](evidence/2026-09-11-a2a-packages-phase-2.md), [Phase 3 protocol/policy checkpoint](evidence/2026-09-11-a2a-packages-phase-3.md), and [Phase 4 service convergence](evidence/2026-09-11-a2a-packages-phase-4.md). Acceptance boxes below remain full-release gates, not blanket claims about these checkpoints. Phase 4 is implemented and verified in its worktree; Phase 5 durable recovery remains next, separately authorized work. No publication or production deployment is implied.
 
 ## Starting assets and limitations (before implementation)
 
@@ -272,7 +272,7 @@ Exercise meaningful combinations, not a redundant Cartesian product. The followi
 - [ ] Same-conversation ordering holds across queued cancellation, timeout, shutdown, and supported process configurations; independent conversations run concurrently.
 - [ ] Durable recovery covers all documented crash windows, ambiguous outcomes, and cancellation truth without blind resubmission or unsafe ownership release.
 - [ ] Awaitable shutdown is idempotent and bounded, with incomplete cleanup reported accurately.
-- [ ] Example 14 and the mature bridge service consume the packages without duplicate core implementations or loss of existing integration evidence.
+- [x] Example 14 and the mature bridge service consume the packages without duplicate core implementations or loss of existing integration evidence. See the Phase 4 checkpoint for the exact test scope.
 - [ ] Packed/registry artifacts pass declared platform/backend gates; documentation separates current support, deferred capabilities, deployment policy, and historical examples.
 
 ## Explicit non-goals

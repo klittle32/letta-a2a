@@ -65,11 +65,15 @@ const task = (state = TaskState.TASK_STATE_WORKING) =>
 function client(methods: Partial<Client>): Client {
   return methods as Client;
 }
-function invoker(methods: Partial<Client>, timeoutMs = 150) {
+function invoker(
+  methods: Partial<Client>,
+  timeoutMs = 150,
+  cancelTimeoutMs = 20,
+) {
   return new PollingA2AInvoker(async () => client(methods), {
     pollIntervalMs: 1,
     timeoutMs,
-    cancelTimeoutMs: 20,
+    cancelTimeoutMs,
   });
 }
 const never = () => new Promise<never>(() => {});
@@ -793,6 +797,9 @@ describe("lossless invocations", () => {
         cancelTask: async () => cancelled,
       },
       40,
+      // This asserts successful cleanup, not a 20ms scheduler performance bound.
+      // Keep the short polling timeout but tolerate concurrent build/crypto load.
+      500,
     )
       .invoke(input())
       .catch((e) => e);

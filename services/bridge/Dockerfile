@@ -1,4 +1,20 @@
-FROM oven/bun:1.3.14 AS build
+FROM oven/bun:1.4.2 AS build
+
+# Build the pinned local packages before resolving root file dependencies.
+WORKDIR /app/packages/letta-a2a-bridge
+COPY packages/letta-a2a-bridge/package.json packages/letta-a2a-bridge/bun.lock ./
+RUN bun install --frozen-lockfile --ignore-scripts
+COPY packages/letta-a2a-bridge/tsconfig.json ./
+COPY packages/letta-a2a-bridge/src ./src
+RUN bun run build
+
+WORKDIR /app/packages/letta-a2a-client
+COPY packages/letta-a2a-client/package.json packages/letta-a2a-client/bun.lock ./
+RUN bun install --frozen-lockfile --ignore-scripts
+COPY packages/letta-a2a-client/tsconfig.json packages/letta-a2a-client/tsconfig.build.json ./
+COPY packages/letta-a2a-client/src ./src
+COPY packages/letta-a2a-client/mods ./mods
+RUN bun run build
 
 WORKDIR /app
 COPY package.json bun.lock ./

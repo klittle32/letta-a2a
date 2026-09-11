@@ -16,13 +16,15 @@ export class ContextStore {
   }
 
   save(agentKey: string, contextId: string, conversationId: string): void {
-    this.mappings[this.key(agentKey, contextId)] = conversationId;
+    const key = this.key(agentKey, contextId);
+    const next = { ...this.mappings, [key]: conversationId };
     const temporaryPath = `${this.path}.tmp`;
-    writeFileSync(temporaryPath, `${JSON.stringify(this.mappings, null, 2)}\n`, {
+    writeFileSync(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, {
       encoding: "utf8",
       mode: 0o600,
     });
     renameSync(temporaryPath, this.path);
+    this.mappings[key] = conversationId;
   }
 
   close(): void {
@@ -56,7 +58,9 @@ export class ContextStore {
       ) {
         return {};
       }
-      throw new Error(`failed to read context store ${this.path}: ${String(error)}`);
+      throw new Error(
+        `failed to read context store ${this.path}: ${String(error)}`,
+      );
     }
   }
 }

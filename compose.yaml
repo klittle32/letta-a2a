@@ -110,6 +110,8 @@ services:
       A2A_GATEWAY_URLS: '{"agent-a":"http://agentgateway:4000","agent-b":"http://agentgateway:4000","reference-agent":"http://agentgateway:4000"}'
       OAUTH_TOKEN_URL: http://auth-server:9000/token
       OAUTH_PUBLIC_BASE_URL: http://127.0.0.1:${OAUTH_PORT:-9001}
+      OAUTH_JWKS_URL: http://auth-server:9000/jwks
+      OAUTH_AUDIENCE: letta-a2a-gateway
       OAUTH_CLIENT_ID: ${OAUTH_BRIDGE_CLIENT_ID:-bridge-client}
       OAUTH_CLIENT_SECRET: ${OAUTH_BRIDGE_CLIENT_SECRET:-bridge-client-secret}
       OAUTH_SCOPE: a2a.discover a2a.invoke

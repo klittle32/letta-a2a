@@ -55,6 +55,15 @@ export interface SessionResources {
 export interface SessionPolicy {
   /** Trusted governance check inside the context lock, immediately before session setup. */
   beforeTurn?(request: LettaTurnRequest): void | Promise<void>;
+  /** Optional idle-conversation continuity, called under the execution lock.
+   * Keys are already owner-scoped by the host. Never fall back to unowned keys.
+   * This is not active-task persistence or crash/restart reconciliation.
+   * Errors fail closed; set must settle before any input is sent.
+   */
+  conversationMapping?: {
+    get(contextId: string): string | undefined | Promise<string | undefined>;
+    set(contextId: string, conversationId: string): void | Promise<void>;
+  };
   /** Explicit shared trust domain; this runtime is not a multi-tenant mapper. */
   sharingDomain: string;
   /** Application must govern persisted tools separately before binding this runner. */
@@ -101,7 +110,10 @@ export class AgentSdkTurnRunner implements LettaTurnRunner {
       throw new Error("Context execution requires reconciliation");
     await this.policy.beforeTurn?.(request);
     throwIfCancelled(request.signal);
-    const known = this.conversations.get(request.a2aContextId);
+    const known =
+      this.conversations.get(request.a2aContextId) ??
+      (await this.policy.conversationMapping?.get(request.a2aContextId));
+    throwIfCancelled(request.signal);
     let conversationId = known;
     const setup: SessionResources =
       typeof this.policy.sessionOptions === "function"
@@ -133,6 +145,11 @@ export class AgentSdkTurnRunner implements LettaTurnRunner {
           const ready = await session.ready();
           throwIfCancelled(request.signal);
           conversationId = ready.conversationId;
+          await this.policy.conversationMapping?.set(
+            request.a2aContextId,
+            ready.conversationId,
+          );
+          throwIfCancelled(request.signal);
           this.conversations.set(request.a2aContextId, ready.conversationId);
           // An ambiguous send must not be retried or followed by another turn.
           sent = true;

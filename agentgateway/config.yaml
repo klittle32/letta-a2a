@@ -9,7 +9,8 @@ gateways:
     port: 4000
     jwtAuth:
       mode: strict
-      preserveToken: false
+      # The bridge independently validates the same JWT, including direct access.
+      preserveToken: true
       issuer: "$OAUTH_ISSUER"
       audiences: [letta-a2a-gateway]
       jwks:
@@ -57,6 +58,8 @@ routes:
           pathPrefix: /a2a/reference-agent
     policies:
       a2a: {}
+      requestHeaderModifier:
+        remove: [authorization]
       urlRewrite:
         path:
           prefix: /
@@ -70,6 +73,8 @@ routes:
           pathPrefix: /a2a/google-adk
     policies:
       a2a: {}
+      requestHeaderModifier:
+        remove: [authorization]
       urlRewrite:
         path:
           prefix: /

@@ -98,6 +98,7 @@ describe("Example 12 topology", () => {
       matches: [{ path: { pathPrefix: "/a2a/google-adk" } }],
       policies: {
         a2a: {},
+        requestHeaderModifier: { remove: ["authorization"] },
         urlRewrite: { path: { prefix: "/" } },
       },
       backends: [{ host: "google-adk-agent:8000" }],

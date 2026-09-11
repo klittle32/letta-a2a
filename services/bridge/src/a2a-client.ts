@@ -1,22 +1,35 @@
-import { randomUUID } from "node:crypto";
-
+import { Message, TaskState, taskStateToJSON, type Part } from "@a2a-js/sdk";
 import {
-  extractA2AResponse,
-  extractMessageText,
-  type A2AInvocationResult,
-} from "./mapping.js";
+  A2AInvocationError,
+  A2AInvocationCancelledError,
+  PollingA2AInvoker,
+  createOfficialClientProvider,
+  type CredentialOwner,
+} from "letta-a2a-client";
+import type { A2AInvocationResult } from "./mapping.js";
 import type { AccessTokenProvider } from "./oauth-client.js";
+
+export { A2AInvocationCancelledError } from "letta-a2a-client";
+
+/** Compact legacy success shape, with explicit resumable interruption detail. */
+export interface OutboundA2AResult extends A2AInvocationResult {
+  status?: string;
+  statusMessage?: string;
+}
 
 export interface InvokeA2AArgs {
   target: string;
   message: string;
   context_id?: string;
+  /** Trusted host value, deliberately absent from the model tool schema. */
   hop?: number;
 }
 
 export interface A2AClientConfig {
   gatewayUrl: string;
   tokenProvider: AccessTokenProvider;
+  /** Stable host identity; service callers should always supply this explicitly. */
+  credentialOwner?: CredentialOwner;
   pollIntervalMs?: number;
   timeoutMs?: number;
   cancelTimeoutMs?: number;
@@ -26,17 +39,6 @@ type FetchLike = (
   input: string | URL | Request,
   init?: RequestInit,
 ) => Promise<Response>;
-
-export class A2AInvocationCancelledError extends Error {
-  constructor(readonly remoteTaskId?: string) {
-    super(
-      remoteTaskId
-        ? `A2A invocation was cancelled; remote task ${remoteTaskId} was asked to cancel`
-        : "A2A invocation was cancelled before a remote task was accepted",
-    );
-    this.name = "A2AInvocationCancelledError";
-  }
-}
 
 export const A2A_EXTERNAL_TOOL = {
   name: "a2a_invoke",
@@ -58,7 +60,8 @@ export const A2A_EXTERNAL_TOOL = {
       },
       context_id: {
         type: "string",
-        description: "Optional prior A2A context ID for conversation continuity",
+        description:
+          "Optional prior A2A context ID for conversation continuity",
       },
     },
     required: ["target", "message"],
@@ -71,195 +74,127 @@ export async function invokeA2A(
   config: A2AClientConfig,
   fetchImpl: FetchLike = fetch,
   signal?: AbortSignal,
-): Promise<A2AInvocationResult> {
+): Promise<OutboundA2AResult> {
   const target = args.target.trim();
   const message = args.message.trim();
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(target)) {
     throw new Error("target must be a lowercase A2A agent name");
   }
   if (!message) throw new Error("message is required");
-
-  const requestMessage: Record<string, unknown> = {
-    messageId: randomUUID(),
-    role: "ROLE_USER",
-    parts: [{ text: message }],
-  };
-  if (args.context_id?.trim()) {
-    requestMessage.contextId = args.context_id.trim();
-  }
-
-  const timeoutMs = config.timeoutMs ?? 120_000;
-  const pollIntervalMs = config.pollIntervalMs ?? 250;
-  const cancelTimeoutMs = config.cancelTimeoutMs ?? 5_000;
-  const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  const combinedSignal = signal
-    ? AbortSignal.any([signal, timeoutSignal])
-    : timeoutSignal;
-  const endpoint = `${config.gatewayUrl.replace(/\/$/, "")}/a2a/${encodeURIComponent(target)}`;
-  const sendRpc = async (
-    body: Record<string, unknown>,
-    requestSignal: AbortSignal = combinedSignal,
-  ): Promise<unknown> => {
-    const accessToken = await config.tokenProvider.getAccessToken(requestSignal);
-    const response = await fetchImpl(endpoint, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        "A2A-Version": "1.0",
-      },
-      body: JSON.stringify(body),
-      signal: requestSignal,
-    });
-    const rawBody = await response.text();
-    if (!response.ok) {
-      throw new Error(`A2A gateway request failed (${response.status}): ${rawBody}`);
-    }
-    let payload: unknown;
-    try {
-      payload = JSON.parse(rawBody);
-    } catch {
-      throw new Error("A2A gateway returned a non-JSON response");
-    }
-    const envelope = asRecord(payload);
-    if (envelope?.error !== undefined) {
-      throw new Error(`A2A gateway returned an error: ${JSON.stringify(envelope.error)}`);
-    }
-    return payload;
-  };
-
-  let remoteTaskId: string | undefined;
-  const cancelRemoteTask = async (): Promise<void> => {
-    if (!remoteTaskId) return;
-    try {
-      await sendRpc(
-        {
-          jsonrpc: "2.0",
-          id: randomUUID(),
-          method: "CancelTask",
-          params: { id: remoteTaskId },
-        },
-        AbortSignal.timeout(cancelTimeoutMs),
-      );
-    } catch {
-      // Cancellation is best effort. Preserve the caller's cancellation or
-      // timeout outcome rather than replacing it with cleanup failure.
-    }
-  };
-
+  const hop = Number.isSafeInteger(args.hop) && args.hop! >= 0 ? args.hop! : 0;
+  // SDK discovery resolves relative to a directory; preserve the mounted target.
+  const endpoint = `${config.gatewayUrl.replace(/\/$/, "")}/a2a/${target}/`;
+  const origin = new URL(endpoint).origin;
+  const owner = config.credentialOwner ?? "legacy-bridge-outbound";
   try {
-    let payload = await sendRpc({
-      jsonrpc: "2.0",
-      id: randomUUID(),
-      method: "SendMessage",
-      params: {
-        message: requestMessage,
-        metadata: {
-          lettaA2aLab: {
-            hop:
-              typeof args.hop === "number" && args.hop >= 0
-                ? Math.floor(args.hop)
-                : 0,
+    const provider = createOfficialClientProvider({
+      fetchImpl: Object.assign(fetchImpl, fetch),
+      policies: {
+        [endpoint]: {
+          destinationOrigins: [origin],
+          peerIdentity: endpoint,
+          headers: { "x-letta-a2a-hop": String(hop) },
+          credential: {
+            owner,
+            audience: typeof owner === "string" ? origin : owner.audience,
+            origins: [origin],
+            headerNames: ["authorization"],
+            provide: async ({ signal, audience }) => ({
+              owner,
+              audience,
+              headers: {
+                authorization: `Bearer ${await config.tokenProvider.getAccessToken(signal)}`,
+              },
+            }),
           },
         },
-        configuration: { returnImmediately: true },
       },
     });
-
-    let task = taskFromPayload(payload);
-    remoteTaskId = stringValue(task?.id);
-    if (!task || !remoteTaskId) {
-      throw new Error("Asynchronous A2A SendMessage returned no task");
-    }
-    while (!isTerminalTaskState(taskState(task))) {
-      if (pollIntervalMs > 0) {
-        await abortableDelay(pollIntervalMs, combinedSignal);
-      }
-      payload = await sendRpc({
-        jsonrpc: "2.0",
-        id: randomUUID(),
-        method: "GetTask",
-        params: { id: remoteTaskId },
-      });
-      task = taskFromPayload(payload);
-      if (!task) {
-        throw new Error(`GetTask returned no task for ${remoteTaskId}`);
-      }
-    }
-
-    const state = taskState(task);
-    if (!state?.endsWith("COMPLETED")) {
-      const status = asRecord(task.status);
-      const detail = extractMessageText(asRecord(status?.message));
-      throw new Error(
-        `A2A task ${String(task.id ?? "unknown")} ended as ${state ?? "unknown"}${detail ? `: ${detail}` : ""}`,
-      );
-    }
-    return extractA2AResponse({
-      jsonrpc: "2.0",
-      id: randomUUID(),
-      result: { task },
+    const invoker = new PollingA2AInvoker(
+      async (url, requestSignal) => {
+        const client = await provider(url, requestSignal);
+        const send = client.sendMessage.bind(client);
+        // Application compatibility only: enrich the SDK's typed request, never
+        // rewrite wire JSON or duplicate discovery, polling, or cancellation.
+        client.sendMessage = (request, options) =>
+          send(
+            {
+              ...request,
+              metadata: { ...request.metadata, lettaA2aLab: { hop } },
+            },
+            options,
+          );
+        return client;
+      },
+      {
+        timeoutMs: config.timeoutMs ?? 120_000,
+        pollIntervalMs: config.pollIntervalMs ?? 250,
+        cancelTimeoutMs: config.cancelTimeoutMs ?? 5_000,
+      },
+    );
+    const result = await invoker.invoke({
+      url: endpoint,
+      message: Message.fromJSON({
+        messageId: crypto.randomUUID(),
+        role: "ROLE_USER",
+        parts: [{ text: message }],
+      }),
+      contextId: args.context_id?.trim() || undefined,
+      signal: signal ?? new AbortController().signal,
     });
-  } catch (error) {
-    if (signal?.aborted || timeoutSignal.aborted) {
-      await cancelRemoteTask();
-      if (signal?.aborted) {
-        throw new A2AInvocationCancelledError(remoteTaskId);
-      }
-      throw new Error(
-        `A2A invocation timed out after ${Math.round(timeoutMs / 1000)} seconds${remoteTaskId ? ` while waiting for ${remoteTaskId}` : ""}`,
-        { cause: error },
-      );
+    if ("messageId" in result) {
+      return {
+        contextId: result.contextId || undefined,
+        taskId: result.taskId || undefined,
+        text: text(result.parts),
+      };
     }
-    throw error;
+    const state = result.status?.state;
+    const compact = {
+      contextId: result.contextId,
+      taskId: result.id,
+      text: result.artifacts.map((artifact) => text(artifact.parts)).join(""),
+    };
+    if (state === TaskState.TASK_STATE_COMPLETED) return compact;
+    if (
+      state === TaskState.TASK_STATE_INPUT_REQUIRED ||
+      state === TaskState.TASK_STATE_AUTH_REQUIRED
+    ) {
+      return {
+        ...compact,
+        status: taskStateToJSON(state),
+        statusMessage: text(result.status?.message?.parts ?? []),
+      };
+    }
+    const details = { submissionAttempted: true, task: result };
+    if (state === TaskState.TASK_STATE_CANCELED)
+      throw new A2AInvocationCancelledError(details);
+    throw new A2AInvocationError("A2A task did not complete", details);
+  } catch (error) {
+    // Keep public protocol detail and cancellation identity, but not nested
+    // transport/OAuth causes (which may contain private bodies or credentials).
+    const details =
+      error instanceof A2AInvocationError
+        ? {
+            submissionAttempted: error.submissionAttempted,
+            messageId: error.messageId,
+            task: error.task,
+            cancellation: error.cancellation,
+          }
+        : { submissionAttempted: false };
+    if (error instanceof A2AInvocationCancelledError)
+      throw new A2AInvocationCancelledError(details);
+    throw new A2AInvocationError(
+      error instanceof A2AInvocationError
+        ? error.message
+        : "A2A operation failed",
+      details,
+    );
   }
 }
 
-function taskFromPayload(payload: unknown): Record<string, unknown> | undefined {
-  const result = asRecord(asRecord(payload)?.result);
-  return asRecord(result?.task) ??
-    (result?.id !== undefined && result.status !== undefined ? result : undefined);
-}
-
-function taskState(task: Record<string, unknown>): string | undefined {
-  const state = asRecord(task.status)?.state;
-  return typeof state === "string" ? state : undefined;
-}
-
-function isTerminalTaskState(state: string | undefined): boolean {
-  return Boolean(
-    state &&
-      ["COMPLETED", "FAILED", "CANCELED", "REJECTED"].some((suffix) =>
-        state.endsWith(suffix),
-      ),
-  );
-}
-
-function asRecord(value: unknown): Record<string, any> | undefined {
-  return value && typeof value === "object"
-    ? (value as Record<string, any>)
-    : undefined;
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value ? value : undefined;
-}
-
-function abortableDelay(milliseconds: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(signal.reason);
-      return;
-    }
-    const timeout = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, milliseconds);
-    const onAbort = () => {
-      clearTimeout(timeout);
-      signal.removeEventListener("abort", onAbort);
-      reject(signal.reason);
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
+function text(parts: Part[]): string {
+  return parts
+    .map((part) => (part.content?.$case === "text" ? part.content.value : ""))
+    .join("");
 }
