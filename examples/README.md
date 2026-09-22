@@ -46,10 +46,10 @@ Streaming was outside the original gateway-selection matrix. Example 09 subseque
 | 10  | [`failure-and-cancellation`](10-failure-and-cancellation/)       | Documented; manually verified                                             | Observe explicit failure and cancellation, including outer-to-child cancellation propagation.                                          |
 | 11  | [`push-notifications`](11-push-notifications/)                   | Documented; protocol and live suites verified                             | Register an authenticated webhook, let the initiating request return, and receive asynchronous task updates.                           |
 | 12  | [`hermes-tui-to-google-adk`](12-hermes-tui-to-google-adk/)       | Documented; provider-free and live paths verified                         | Use Hermes's built-in A2A tool from an interactive Docker TUI to continue a conversation with a Google ADK agent through agentgateway. |
-| 13  | [`a2a-cli-skill`](13-a2a-cli-skill/)                             | Documented                                                                | Install the official CLI and give a shell-capable agent a skill that explains how to use it.                                           |
+| 13  | [`a2a-cli-skill`](13-a2a-cli-skill/)                             | Canonical v0.2.0 direct-endpoint path verified                            | Install the official CLI and give a shell-capable agent a skill that explains how to use it.                                           |
 | 14  | [`typescript-letta-agent-sdk`](14-typescript-letta-agent-sdk/)   | Documented; runnable locally                                               | Expose a persistent Letta agent through the official TypeScript A2A client/server and Letta Agent SDK.                                 |
 
-Example 13 is delivered on Example 12's Google ADK service and gateway route.
+Example 13 is delivered on Example 12's Google ADK service and gateway route. Its provider-free canonical-CLI proof is recorded in [`docs/evidence/2026-09-22-example-13-canonical-cli.md`](../docs/evidence/2026-09-22-example-13-canonical-cli.md).
 
 ## Scenario details
 
@@ -110,7 +110,7 @@ Run the official Hermes Agent TUI interactively inside Docker and enable its bui
 
 ### 13 — Portable A2A CLI skill
 
-Install the official `a2acli` for your operating system, then add one small Agent Skill that teaches a shell-capable agent the CLI commands for discovery, messaging, task polling, cancellation, and context continuation. Follow the [walkthrough](13-a2a-cli-skill/).
+Install the canonical official `a2a` CLI, then add the A2A Project's published Agent Skill so a shell-capable agent can discover peers, send messages, stream or poll tasks, continue work, and cancel exact tasks. Follow the [walkthrough](13-a2a-cli-skill/).
 
 ### 14 — TypeScript A2A server to Letta Agent SDK
 

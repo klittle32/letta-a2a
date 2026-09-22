@@ -36,7 +36,7 @@ Progress: [Phase 0/1 checkpoint](evidence/2026-09-11-a2a-packages-phase-0-1.md),
 | `packages/letta-a2a-client/` | Packaged mod, official client, polling, cancellation, named routes, durable context mapping | Full task continuation, lossless content, or cross-process execution serialization; file-write locking alone does not serialize invocations |
 | `examples/14-typescript-letta-agent-sdk/` | Small SDK composition, executor, conversation mapping, assistant streaming, cancellation, restrictive tool policy | Production recovery, caller isolation, or permission to copy every implementation detail unchanged |
 | `services/bridge/` | OAuth/gateway composition, delegation policy, streaming, push delivery, multi-agent fixture | Durable A2A tasks: the service uses `InMemoryTaskStore`; its persisted context map is a separate guarantee |
-| `tests/`, `scripts/`, Example 13 and `a2acli` | Deterministic fixtures, provider-backed evidence, independent cross-language client | Complete protocol conformance merely because existing demonstrations pass |
+| `tests/`, `scripts/`, Example 13 and the canonical `a2a` CLI | Deterministic fixtures, provider-backed evidence, independent cross-language client | Complete protocol conformance merely because existing demonstrations pass |
 
 Consolidate these implementations rather than rewrite them. Task lifecycle completion, ownership enforcement, and in-flight recovery are explicit new work.
 
@@ -257,7 +257,7 @@ Use deterministic agents and controlled SDK seams for protocol assertions. Use p
 Keep the test matrix in three dimensions rather than confusing deployment with protocol capability:
 
 1. **Protocol:** every required inventory row, terminal/interrupted lifecycle, content preservation, invalid inputs, and enabled optional features.
-2. **Integration:** client library, Letta Code mod, SDK tools, bridge, nested bridge-to-client delegation, and independent `a2acli`/Python interoperability.
+2. **Integration:** client library, Letta Code mod, SDK tools, bridge, nested bridge-to-client delegation, and independent canonical-CLI/Python interoperability.
 3. **Deployment:** direct local, directly authenticated, gateway-backed, and durable single-owner profiles on declared platforms/backends.
 
 Exercise meaningful combinations, not a redundant Cartesian product. The following gates are mandatory:
