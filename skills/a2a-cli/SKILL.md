@@ -14,7 +14,7 @@ compatibility: >-
 license: Apache-2.0
 metadata:
   source: https://github.com/a2aproject/a2a-cli
-  version: "2026.09.08"
+  version: "2026.09.22"
 ---
 
 # Driving A2A agents with the `a2a` CLI
@@ -42,23 +42,32 @@ returned.
 
 ## Setup
 
-The skill needs the `a2a` binary on PATH — check with `a2a version`. If it is
-missing, install it with Homebrew (`brew tap a2aproject/a2a-cli
-https://github.com/a2aproject/a2a-cli && brew install a2a`), WinGet
-(`winget install a2aproject.a2acli`), a prebuilt binary from the
-[releases page](https://github.com/a2aproject/a2a-cli/releases/latest), or from
-source with a Go toolchain (re-run to update):
+The skill drives the `a2a` binary and does not install it. Confirm it is on your
+PATH with `a2a version`; if that fails, install it by the method that fits your
+platform:
 
-```bash
-go install github.com/a2aproject/a2a-cli@latest
+- **Homebrew (macOS / Linux):**
 
-# rename to a2a to match the docs
+  ```bash
+  brew tap a2aproject/a2a-cli https://github.com/a2aproject/a2a-cli
+  brew install a2a
+  ```
 
-mv "$(command -v a2a-cli)" "$(dirname "$(command -v a2a-cli)")/a2a"
-```
+- **WinGet (Windows):** `winget install a2aproject.a2acli`
+- **Prebuilt binary:** download the archive for your platform from the
+  [releases page](https://github.com/a2aproject/a2a-cli/releases/latest),
+  extract it, and put the `a2a` binary on your PATH.
+- **From source** (Go toolchain; re-run to update):
 
-The tool is under active development. Treat `a2a help` and `a2a <command>
---help` as the source of truth for the current commands and flags.
+  ```bash
+  go install github.com/a2aproject/a2a-cli@latest
+  # go install names the binary a2a-cli; rename it to a2a to match the docs
+  mv "$(command -v a2a-cli)" "$(dirname "$(command -v a2a-cli)")/a2a"
+  ```
+
+Treat `a2a help` and `a2a <command> --help` as the source of truth for the current commands and flags. If a command is rejected as unknown or a
+flag no longer exists, your SKILL.md copy is likely stale — run `a2a skill` and update
+your local `SKILL.md` from its output.
 
 ## Task lifecycle
 
@@ -124,11 +133,17 @@ Run `a2a <command> --help` for the full, current set. The load-bearing ones:
 | `-o, --output json` | Machine-readable output; add `--stream` for a live event stream. |
 | `--async` | Return immediately with the identifiers instead of blocking; poll later with `task get`. |
 | `--task-id <id>` / `--context-id <id>` | Continue a task / group a new task under a context. |
+| `--save-fileparts <dir>` | Save raw file parts from responses (artifacts and messages) as files under `<dir>`; the output still summarizes them by name/type/size. |
 | `--auth "<creds>"` / `--svc-param <k=v>` | Attach credentials or transport parameters (or set `A2ACLI_*` env vars). Never commit a secret. |
 
 ## Configuration
 
-Every setting can come from a flag, an `A2ACLI_*` environment variable, or a
-`.env` file (a local `.env`, or `~/.config/a2a-cli/.env`); precedence is
-flag > env var > file. Inspect the effective values and where each resolved from
-with `a2a config show` (secrets redacted).
+Every setting can come from a flag, an `A2ACLI_*` environment variable, a
+`.env` file (a local `.env`, or `~/.config/a2a-cli/.env`), or the persistent
+user-level `~/.config/a2a-cli/config.yaml`; precedence is flag > env var >
+local file > user `config.yaml` > global `.env`. Inspect the effective values
+and where each resolved from with `a2a config show` (secrets redacted).
+
+Command plugins — `a2a-<name>` binaries on `PATH` that add top-level commands —
+are opt-in and disabled by default. Enable discovery with `a2a plugin
+set-enabled true`.

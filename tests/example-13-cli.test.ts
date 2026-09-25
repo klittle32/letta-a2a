@@ -9,7 +9,9 @@ describe("Example 13 canonical A2A CLI", () => {
     const example = readFileSync(examplePath, "utf8");
 
     expect(example).toContain("https://github.com/a2aproject/a2a-cli");
-    expect(example).toContain("v0.2.0");
+    expect(example).toContain("v0.3.0");
+    expect(example).toContain("WinGet catalog still lists v0.2.0");
+    expect(example).toContain("does not publish a Scoop manifest");
     expect(example).toContain("brew tap a2aproject/a2a-cli");
     expect(example).toContain("brew install a2a");
     expect(example).toContain("a2a version");
@@ -35,6 +37,16 @@ describe("Example 13 canonical A2A CLI", () => {
     expect(example).not.toContain("--return-immediately");
   });
 
+  test("documents the v0.3 skill, file-part, config, and plugin additions", () => {
+    const example = readFileSync(examplePath, "utf8");
+
+    expect(example).toContain("a2a skill");
+    expect(example).toContain("--save-fileparts");
+    expect(example).toContain("~/.config/a2a-cli/config.yaml");
+    expect(example).toContain("a2a plugin set-enabled true");
+    expect(example).toContain("disabled by default");
+  });
+
   test("records the released CLI Agent Card limitation instead of weakening the card", () => {
     const example = readFileSync(examplePath, "utf8");
 
@@ -52,7 +64,11 @@ describe("Example 13 canonical A2A CLI", () => {
     const license = readFileSync("skills/a2a-cli/LICENSE", "utf8");
     expect(skill).toContain("name: a2a-cli");
     expect(skill).toContain("github.com/a2aproject/a2a-cli");
-    expect(skill).toContain('version: "2026.09.08"');
+    expect(skill).toContain('version: "2026.09.22"');
+    expect(skill).toContain("run `a2a skill`");
+    expect(skill).toContain("--save-fileparts <dir>");
+    expect(skill).toContain("~/.config/a2a-cli/config.yaml");
+    expect(skill).toContain("a2a plugin");
     expect(skill).toContain("a2a task subscribe");
     expect(skill).toContain("a2a task cancel");
     expect(skill).toContain("Never commit a secret");
@@ -67,6 +83,8 @@ describe("Example 13 canonical A2A CLI", () => {
     const combined = `${root}\n${examples}\n${conclusions}`;
 
     expect(combined).toContain("official `a2a` CLI");
+    expect(root).toContain("2026-09-25-example-13-cli-v0.3.0.md");
+    expect(examples).toContain("v0.3.0 direct-endpoint path verified");
     expect(combined).not.toMatch(/official `a2acli`/);
     expect(combined).not.toContain("using-a2a-cli skill");
   });

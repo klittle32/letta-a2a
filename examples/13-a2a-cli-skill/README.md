@@ -4,7 +4,7 @@
 
 An agent does not need a custom A2A integration. Install the canonical [`a2aproject/a2a-cli`](https://github.com/a2aproject/a2a-cli) client, give the agent the project's official skill, and let it call an A2A agent from the shell.
 
-This walkthrough was verified with the official `a2a` **v0.2.0** release. It replaces the earlier Rust `a2acli` walkthrough and its now-obsolete command names.
+This walkthrough was verified with the official `a2a` **v0.3.0** release. It replaces the earlier Rust `a2acli` walkthrough and its now-obsolete command names.
 
 ```text
 Letta Code or another shell-capable agent
@@ -29,11 +29,20 @@ winget install a2aproject.a2acli
 
 Prebuilt macOS, Linux, and Windows binaries are also available on the [official release page](https://github.com/a2aproject/a2a-cli/releases/latest). Download the archive for your operating system and CPU, verify it against `checksums.txt`, extract it, and put `a2a` (or `a2a.exe`) on `PATH`.
 
+At this 2026-09-25 verification checkpoint, the public WinGet catalog still lists v0.2.0 even though v0.3.0 is released. Confirm `a2a version`; use the v0.3.0 release ZIP until the WinGet manifest catches up. The canonical project does not publish a Scoop manifest as of v0.3.0. Scoop can consume a custom manifest for the release ZIPs, but the supported Windows paths are WinGet, a prebuilt binary, or a source build.
+
 Verify the installation:
 
 ```bash
 a2a version
 ```
+
+### What v0.3 adds
+
+- `a2a skill` prints the version-matched Agent Skill bundled into the executable.
+- `--save-fileparts <dir>` saves raw file parts returned by `send`, `task get`, or `task subscribe` while keeping the normal bounded output summary.
+- Persistent user configuration can live at `~/.config/a2a-cli/config.yaml`; inspect effective values and provenance with `a2a config show`.
+- Command plugins are opt-in and disabled by default. Only enable discovery when needed with `a2a plugin set-enabled true`.
 
 ## 2. Start the example agent
 
@@ -121,11 +130,18 @@ The published Agent Card uses A2A 1.0's strict ProtoJSON security-requirement sh
 {"schemes":{"a2aOAuth":{"list":["a2a.invoke"]}}}
 ```
 
-Official `a2a` v0.2.0 currently rejects that valid card while resolving it, returning `A2ACLI_ERR_CARD_INVALID` because its Go decoder expects the scheme value to be a bare string array. The Agent Card remains unchanged; this walkthrough uses the CLI's supported `--endpoint` plus explicit `--transport jsonrpc` mode until the client accepts strict ProtoJSON. Direct endpoint mode still exercises authenticated A2A messaging, polling, listing, and context continuation through agentgateway.
+Official `a2a` v0.3.0 still rejects that valid card while resolving it, returning `A2ACLI_ERR_CARD_INVALID` because its Go decoder expects the scheme value to be a bare string array. The Agent Card remains unchanged; this walkthrough uses the CLI's supported `--endpoint` plus explicit `--transport jsonrpc` mode until the client accepts strict ProtoJSON. Direct endpoint mode still exercises authenticated A2A messaging, polling, listing, and context continuation through agentgateway.
 
 ## 4. Give the official skill to an agent
 
-The A2A Project publishes the canonical [`a2a-cli` skill](https://github.com/a2aproject/a2a-cli/blob/v0.2.0/skills/a2a-cli/SKILL.md). This repository carries the same released descriptor at [`skills/a2a-cli/SKILL.md`](../../skills/a2a-cli/SKILL.md) so the example remains reproducible.
+The A2A Project publishes the canonical [`a2a-cli` skill](https://github.com/a2aproject/a2a-cli/blob/v0.3.0/skills/a2a-cli/SKILL.md). The v0.3 executable can print its own matching copy:
+
+```bash
+a2a skill > /tmp/a2a-cli-v0.3.0-SKILL.md
+cmp /tmp/a2a-cli-v0.3.0-SKILL.md skills/a2a-cli/SKILL.md
+```
+
+This repository carries that exact released descriptor at [`skills/a2a-cli/SKILL.md`](../../skills/a2a-cli/SKILL.md), with its Apache 2.0 license, so the example remains reproducible.
 
 For Letta Code, start it from the repository root with this skill directory:
 
