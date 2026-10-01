@@ -1,0 +1,48 @@
+# Routes to add under `routes:` in an agentgateway v1.5 config whose default
+# gateway listens on the gateway VM. "scooter.int.exe.xyz" is the exe.dev
+# VM-to-VM integration that targets the agent VM; it injects its own credential,
+# so the gateway holds no secret for Scooter.
+
+# Discovery is open. The longer prefix wins over the keyed route below.
+- name: scooter-card
+  gateways: default
+  matches:
+  - path:
+      pathPrefix: /scooter/.well-known/
+  policies:
+    a2a: {}
+    urlRewrite:
+      path:
+        prefix: /.well-known/
+      authority: auto
+  backends:
+  - host: scooter.int.exe.xyz:443
+    policies:
+      backendTLS: {}
+
+# Everything else needs an API key in X-API-Key. Store only its hash:
+#   printf '%s' "$KEY" | shasum -a 256
+- name: scooter
+  gateways: default
+  matches:
+  - path:
+      pathPrefix: /scooter
+  policies:
+    a2a: {}
+    apiKey:
+      mode: strict
+      location:
+        header:
+          name: x-api-key
+      keys:
+      - keyHash: sha256:<hex digest of your key>
+        metadata:
+          name: my-client
+    urlRewrite:
+      path:
+        prefix: /
+      authority: auto
+  backends:
+  - host: scooter.int.exe.xyz:443
+    policies:
+      backendTLS: {}

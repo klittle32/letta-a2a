@@ -48,6 +48,7 @@ Streaming was outside the original gateway-selection matrix. Example 09 subseque
 | 12  | [`hermes-tui-to-google-adk`](12-hermes-tui-to-google-adk/)       | Documented; provider-free and live paths verified                         | Use Hermes's built-in A2A tool from an interactive Docker TUI to continue a conversation with a Google ADK agent through agentgateway. |
 | 13  | [`a2a-cli-skill`](13-a2a-cli-skill/)                             | Canonical v0.3.0 direct-endpoint path verified                            | Install the official CLI and give a shell-capable agent a skill that explains how to use it.                                           |
 | 14  | [`typescript-letta-agent-sdk`](14-typescript-letta-agent-sdk/)   | Documented; runnable locally                                               | Expose a persistent Letta agent through the official TypeScript A2A client/server and Letta Agent SDK.                                 |
+| 15  | [`letta-agent-on-exe-dev`](15-letta-agent-on-exe-dev/)           | Documented; exercised on exe.dev VMs                                       | Deploy a local-backend Letta agent to its own exe.dev VM and reach it through agentgateway with an API key.                            |
 
 Example 13 is delivered on Example 12's Google ADK service and gateway route. Its latest provider-free canonical-CLI proof is recorded in [`docs/evidence/2026-09-25-example-13-cli-v0.3.0.md`](../docs/evidence/2026-09-25-example-13-cli-v0.3.0.md); the earlier v0.2.0 evidence remains as history.
 
@@ -115,6 +116,10 @@ Install the canonical official `a2a` CLI, then add the A2A Project's published A
 ### 14 — TypeScript A2A server to Letta Agent SDK
 
 Use the official `@a2a-js/sdk` for both the client and server, then implement the narrow `AgentExecutor` that runs a persistent Letta agent through `@letta-ai/letta-agent-sdk`. This standalone local example shows streaming text, context-to-conversation mapping, failure, and cancellation without Rust, Docker, a gateway, authentication, or v0.3 compatibility. Follow the [walkthrough](14-typescript-letta-agent-sdk/).
+
+### 15 — Letta agent on exe.dev behind agentgateway
+
+Run Example 14's composition on a remote host: a local-backend Letta agent (GPT-6 Luna through exe.dev's ChatGPT-backed LLM integration) on its own exe.dev VM, reached through agentgateway on a second VM. Shows exe.dev VM-to-VM credential injection, a source-VM guard, an `apiKey`-protected route advertised in the Agent Card, and the official `a2a` CLI from a laptop. Follow the [walkthrough](15-letta-agent-on-exe-dev/).
 
 ## Required README shape
 

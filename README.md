@@ -96,8 +96,9 @@ Follow the numbered learning path in [`examples/`](examples/README.md). The read
 - `12` — [Hermes TUI to Google ADK](examples/12-hermes-tui-to-google-adk/)
 - `13` — [Portable A2A CLI skill](examples/13-a2a-cli-skill/)
 - `14` — [TypeScript A2A server to Letta Agent SDK](examples/14-typescript-letta-agent-sdk/)
+- `15` — [Letta agent on exe.dev behind agentgateway](examples/15-letta-agent-on-exe-dev/)
 
-Implemented examples are complete through Example 14. Examples 06–08 retain exact historical checkpoints because later stages intentionally replaced their security policy. Polling walkthroughs reuse `scripts/smoke-a2a.mjs`, streaming uses `curl -N` and the integration client's SSE parser, and Example 12 adds a separate profile-gated ADK/Hermes path. Example 14 is a standalone local TypeScript package and does not use the Docker lab.
+Implemented examples are complete through Example 15. Examples 06–08 retain exact historical checkpoints because later stages intentionally replaced their security policy. Polling walkthroughs reuse `scripts/smoke-a2a.mjs`, streaming uses `curl -N` and the integration client's SSE parser, and Example 12 adds a separate profile-gated ADK/Hermes path. Example 14 is a standalone local TypeScript package and does not use the Docker lab.
 
 ## Development checks
 

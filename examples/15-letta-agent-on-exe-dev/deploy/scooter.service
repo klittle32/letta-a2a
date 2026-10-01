@@ -1,0 +1,21 @@
+# systemd unit for the agent VM. Replace exedev and the paths if your user or
+# checkout location differ. Install to /etc/systemd/system/scooter.service.
+[Unit]
+Description=Scooter - Letta agent over A2A (letta-a2a Example 15)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=exedev
+WorkingDirectory=/home/exedev/letta-a2a/examples/15-letta-agent-on-exe-dev
+Environment=PORT=8000
+# Only the gateway VM may call A2A methods; discovery stays open.
+Environment=ALLOWED_SOURCE_VMS=lhc-agentgateway
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/exedev/letta-a2a/examples/15-letta-agent-on-exe-dev/node_modules/.bin/tsx src/server.ts
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
