@@ -154,7 +154,7 @@ Letta agent: agent-local-...
 Agent Card: http://127.0.0.1:41241/.well-known/agent-card.json
 ```
 
-The client terminal prints streamed public assistant text, task states, and the IDs needed for continuation.
+The client terminal prints task states (including progress such as `Writing the answer...`), the assistant's answer, and the IDs needed for continuation.
 
 ## What the controller is doing
 
@@ -163,7 +163,7 @@ The package's [`LettaAgentExecutor`](../../packages/letta-a2a-bridge/src/letta-a
 1. Publish the A2A `submitted` task snapshot and `working` status.
 2. Extract text from the incoming A2A message.
 3. Ask `AgentSdkTurnRunner` to run one Letta turn in the conversation associated with the A2A context.
-4. Publish only Letta assistant text as ordered A2A artifact chunks. Reasoning, tool activity, and internal runtime events stay private.
+4. Publish coarse progress (thinking, using a tool, retrying, writing) as working-status updates, then the Letta assistant text once as a single artifact. Reasoning text, tool details, and internal runtime events stay private.
 5. Publish exactly one terminal A2A state: `completed`, `failed`, or `canceled`.
 
 `cancelTask()` aborts the task's `AbortController`. The signal either removes a queued turn before it starts or calls `session.abort()` on the active Letta SDK session. The executor—not the cancellation callback—publishes the final A2A state, avoiding competing terminal events.

@@ -7,6 +7,8 @@ import type {
 
 import type { TrustedCaller } from "./request-policy.js";
 
+/** Coarse turn progress. Carries no reasoning text, tool names, or arguments. */
+export type LettaTurnPhase = "thinking" | "tool" | "retrying";
 export interface LettaTurnRequest {
   /** Host task correlation; never an execution ownership key. */
   taskId?: string;
@@ -20,6 +22,7 @@ export interface LettaTurnRequest {
   text: string;
   signal: AbortSignal;
   onAssistantText(text: string): void;
+  onProgress?(phase: LettaTurnPhase): void;
 }
 /** Interruption is a trusted, settled runner outcome, never assistant-prose parsing.
  * Returning it guarantees this turn no longer owns active or uncertain execution.
@@ -192,7 +195,10 @@ export class AgentSdkTurnRunner implements LettaTurnRunner {
             if (message.type === "assistant") {
               assistantText += message.content;
               request.onAssistantText(message.content);
-            } else if (message.type === "result") result = message;
+            } else if (message.type === "reasoning") request.onProgress?.("thinking");
+            else if (message.type === "tool_call") request.onProgress?.("tool");
+            else if (message.type === "retry") request.onProgress?.("retrying");
+            else if (message.type === "result") result = message;
           }
         } finally {
           request.signal.removeEventListener("abort", abortSession);

@@ -95,7 +95,7 @@ Separate identity from permission. The current stack uses distinct operator, int
 
 ### 09 — Streaming
 
-Both agents advertise streaming and use A2A `SendStreamingMessage` over Server-Sent Events. The bridge translates only top-level Letta assistant text into ordered artifact updates, while both implementations emit task/status lifecycle events ending at a terminal state. A deterministic reference-agent probe proves that disconnecting the SSE consumer leaves server-side execution intact for later `GetTask` retrieval.
+Both agents advertise streaming and use A2A `SendStreamingMessage` over Server-Sent Events. The bridge streams Letta progress as status updates and publishes the assistant text as one artifact, while both implementations emit task/status lifecycle events ending at a terminal state. A deterministic reference-agent probe proves that disconnecting the SSE consumer leaves server-side execution intact for later `GetTask` retrieval.
 
 ### 10 — Failure and cancellation
 

@@ -4,7 +4,7 @@
 
 A2A can return an ordered stream of task lifecycle and artifact updates over Server-Sent Events instead of making the client poll for every change. Both agents now advertise streaming and accept the A2A 1.0 `SendStreamingMessage` method through the same authenticated agentgateway route used by ordinary JSON-RPC calls.
 
-The external reference agent emits deterministic text chunks. The Letta bridge translates only top-level `assistant_message` text from the App Server WebSocket; reasoning, tool activity, command output, subagent output, and unknown runtime events remain private.
+The external reference agent emits deterministic text chunks. The Letta bridge streams coarse progress (thinking, using a tool, retrying, writing) as working-status updates, then publishes the top-level assistant text once, as a single artifact, when the turn ends. Reasoning text, tool names and arguments, command output, subagent output, and unknown runtime events remain private.
 
 Executed verification is retained in [`docs/evidence/2026-09-04-example-09.md`](../../docs/evidence/2026-09-04-example-09.md).
 
@@ -101,7 +101,7 @@ statusUpdate.status.state                 TASK_STATE_COMPLETED
 
 All artifact updates reuse one artifact ID. Concatenating their text parts yields `STREAMING_OK`. A later `GetTask` returns the same assembled artifact.
 
-The live suite sends `SendStreamingMessage` to Letta Agent A and receives `LETTA_STREAM_OK` as one or more safe text chunks before the completed status.
+The live suite sends `SendStreamingMessage` to Letta Agent A and receives progress status updates, then `LETTA_STREAM_OK` as one artifact before the completed status.
 
 ## Watch it happen
 
@@ -128,8 +128,8 @@ Breaking the SSE connection does not imply A2A cancellation. The deterministic r
 ## Boundaries
 
 - This example proves ordered SSE records through the pinned gateway, not a latency or throughput target.
-- The bridge streams only final-channel assistant text. It deliberately exposes no private reasoning, tool arguments/results, command output, or subagent events.
-- Already-delivered partial artifact chunks cannot be retracted. Failed or canceled streams never mark partial output as a final chunk.
+- The bridge streams only coarse progress phases and the final-channel assistant text. It deliberately exposes no private reasoning, tool names, arguments or results, command output, or subagent events.
+- The reference agent's delivered chunks cannot be retracted. Failed or canceled streams never mark partial output as a final chunk; the Letta bridge publishes partial text once, nonfinal.
 - The outbound `a2a_invoke` clients still use asynchronous task creation plus polling. Streaming is currently implemented for inbound A2A calls, not nested outbound delegation.
 - The reference-agent probe proves that client disconnect is not cancellation. A provider-backed Letta disconnect was not added to this example. This proves later `GetTask` retrieval, not `SubscribeToTask` resumption.
 - Active tasks remain in memory, as in earlier examples. Process restarts still lose A2A task records.

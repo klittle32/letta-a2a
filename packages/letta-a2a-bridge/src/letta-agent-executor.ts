@@ -12,6 +12,7 @@ import { trustedCaller } from "./request-policy.js";
 import type { DurableBinding } from "./durable-binding.js";
 import {
   LettaTurnCancelledError,
+  type LettaTurnPhase,
   type LettaTurnRunner,
 } from "./letta-agent.js";
 
@@ -101,7 +102,16 @@ export class LettaAgentExecutor implements AgentExecutor {
     const cancellation = new AbortController();
     this.activeTasks.set(taskId, cancellation);
     this.interrupted.delete(taskId);
-    const artifact = new StreamingTextArtifact(eventBus, taskId, contextId);
+    const artifact = new TextArtifact(eventBus, taskId, contextId);
+    const progress = new ProgressStatus((detail) =>
+      this.publishTerminal(
+        eventBus,
+        taskId,
+        contextId,
+        TaskState.TASK_STATE_WORKING,
+        detail,
+      ),
+    );
     const contextKey = this.contextKey(request);
     let accepted = false;
     try {
@@ -130,7 +140,11 @@ export class LettaAgentExecutor implements AgentExecutor {
           messageId: userMessage.messageId,
           text,
           signal: cancellation.signal,
-          onAssistantText: (chunk) => artifact.push(chunk),
+          onAssistantText: (chunk) => {
+            progress.update("writing");
+            artifact.push(chunk);
+          },
+          onProgress: (phase) => progress.update(phase),
         });
         if (this.letta.unresolvedContexts?.includes(contextKey))
           throw new Error("Execution requires reconciliation");
@@ -157,6 +171,8 @@ export class LettaAgentExecutor implements AgentExecutor {
           ? undefined
           : "The bridge could not complete this text request; execution may require reconciliation";
       }
+      // No progress may follow the terminal state.
+      progress.close();
       // One status message identity connects journal preparation to the SDK save.
       const terminal = this.terminalEvent(
         taskId,
@@ -170,7 +186,7 @@ export class LettaAgentExecutor implements AgentExecutor {
             : undefined),
       );
       if (this.durability) {
-        const replacement = artifact.replacement(successful);
+        const replacement = artifact.snapshot(successful);
         await this.durability.publication(
           request,
           [...(replacement ? [replacement] : []), terminal],
@@ -362,28 +378,37 @@ export class LettaAgentExecutor implements AgentExecutor {
   }
 }
 
-/** Live text is sent after this delay or size, whichever comes first. */
-const STREAM_BATCH_MS = 100;
-const STREAM_BATCH_CHARS = 200;
+const PROGRESS_MESSAGES: Record<LettaTurnPhase | "writing", string> = {
+  thinking: "Thinking...",
+  tool: "Using a tool...",
+  retrying: "Retrying after a provider error...",
+  writing: "Writing the answer...",
+};
+
+/** Publishes a working-status update each time the turn changes phase. */
+class ProgressStatus {
+  private last?: LettaTurnPhase | "writing";
+  private closed = false;
+  constructor(private readonly publish: (detail: string) => void) {}
+  update(phase: LettaTurnPhase | "writing"): void {
+    if (this.closed || phase === this.last) return;
+    this.last = phase;
+    this.publish(PROGRESS_MESSAGES[phase]);
+  }
+  close(): void {
+    this.closed = true;
+  }
+}
 
 /**
- * Streams assistant text as ordered append-only artifact deltas.
- *
- * Letta emits text a few characters at a time. Forwarding each piece as its own
- * event floods streaming clients and costs one task-store save per token, so
- * text is batched by time and size. The newest piece is always held back (the
- * original one-item lookahead) so the final delta can carry lastChunk; at most
- * one piece waits during a model pause. The deltas concatenate to the full
- * answer, and read paths join the stored parts (see coalesceTextParts).
+ * Collects the turn's assistant text and publishes it once, as a single part,
+ * when the turn settles. Streaming clients follow progress through status
+ * updates rather than token-sized text deltas, and the one artifact event
+ * keeps the stream contract: append false, lastChunk only when completed.
  */
-class StreamingTextArtifact {
+class TextArtifact {
   readonly artifactId = crypto.randomUUID();
   private readonly chunks: string[] = [];
-  /** Unsent pieces; the last one is the held-back lookahead. */
-  private unsent: string[] = [];
-  private unsentLength = 0;
-  private timer?: ReturnType<typeof setTimeout>;
-  private started = false;
   private settled = false;
   constructor(
     private readonly eventBus: ExecutionEventBus,
@@ -391,23 +416,29 @@ class StreamingTextArtifact {
     private readonly contextId: string,
   ) {}
   push(text: string): void {
-    if (!text || this.settled) return;
-    this.chunks.push(text);
-    this.unsent.push(text);
-    this.unsentLength += text.length;
-    if (this.unsentLength >= STREAM_BATCH_CHARS) this.closeBatch();
-    else this.timer ??= setTimeout(() => this.closeBatch(), STREAM_BATCH_MS);
+    if (text && !this.settled) this.chunks.push(text);
   }
   prepare(fallback: string): void {
-    if (this.chunks.length || !fallback) return;
-    this.chunks.push(fallback);
-    this.unsent = [fallback];
-    this.unsentLength = fallback.length;
+    if (!this.chunks.length && fallback) this.chunks.push(fallback);
   }
-  /** Durable journal entry: the full text as a single part. */
-  replacement(lastChunk: boolean) {
+  /** The full text as one artifact event; also the durable journal entry. */
+  snapshot(lastChunk: boolean) {
     if (!this.chunks.length) return undefined;
-    return this.update(this.chunks.join(""), false, lastChunk);
+    return AgentEvent.artifactUpdate({
+      taskId: this.taskId,
+      contextId: this.contextId,
+      artifact: {
+        artifactId: this.artifactId,
+        name: "Letta response",
+        description: "Public assistant text from the Letta turn.",
+        parts: [textPart(this.chunks.join(""))],
+        metadata: undefined,
+        extensions: [],
+      },
+      append: false,
+      lastChunk,
+      metadata: undefined,
+    });
   }
   finish(): void {
     this.settle(true);
@@ -416,48 +447,10 @@ class StreamingTextArtifact {
   stop(): void {
     this.settle(false);
   }
-  /** Sends everything except the newest piece, which stays as lookahead. */
-  private closeBatch(): void {
-    this.clearTimer();
-    if (this.settled || this.unsent.length < 2) return;
-    const held = this.unsent.pop()!;
-    this.publish(this.unsent.join(""), false);
-    this.unsent = [held];
-    this.unsentLength = held.length;
-  }
   private settle(lastChunk: boolean): void {
     if (this.settled) return;
     this.settled = true;
-    this.clearTimer();
-    const tail = this.unsent.join("");
-    this.unsent = [];
-    this.unsentLength = 0;
-    if (tail) this.publish(tail, lastChunk);
-  }
-  private publish(text: string, lastChunk: boolean): void {
-    this.eventBus.publish(this.update(text, this.started, lastChunk));
-    this.started = true;
-  }
-  private clearTimer(): void {
-    if (this.timer === undefined) return;
-    clearTimeout(this.timer);
-    this.timer = undefined;
-  }
-  private update(text: string, append: boolean, lastChunk: boolean) {
-    return AgentEvent.artifactUpdate({
-      taskId: this.taskId,
-      contextId: this.contextId,
-      artifact: {
-        artifactId: this.artifactId,
-        name: "Letta response",
-        description: "Public assistant text from the Letta turn.",
-        parts: [textPart(text)],
-        metadata: undefined,
-        extensions: [],
-      },
-      append,
-      lastChunk,
-      metadata: undefined,
-    });
+    const event = this.snapshot(lastChunk);
+    if (event) this.eventBus.publish(event);
   }
 }

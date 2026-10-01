@@ -120,7 +120,7 @@ bun run test:compose
 
 Build both packages before installing root or Example 14 local file dependencies. After rebuilding them, refresh installed copies with `bun install --frozen-lockfile --force` in the root and example. The Docker build performs these steps inside the image using Bun 1.4.2; it does not depend on host build output. The bridge's `check` includes source and test type-checking; root `bun test` discovers the lab, package, and example tests.
 
-Unit tests cover configuration and gateway-route validation, OAuth issuance and token caching, protocol text mapping, safe Letta stream projection, ordered artifact publication, push registration and delivery policy, duplicate-safe callback receipt, durable A2A-context mappings, Agent Card construction, delegation hop policy, both outbound A2A client paths, and the reference agent's deterministic command surface.
+Unit tests cover configuration and gateway-route validation, OAuth issuance and token caching, protocol text mapping, safe Letta stream projection, progress status and single-artifact publication, push registration and delivery policy, duplicate-safe callback receipt, durable A2A-context mappings, Agent Card construction, delegation hop policy, both outbound A2A client paths, and the reference agent's deterministic command surface.
 
 Run the deterministic protocol matrix without calling a model provider:
 
@@ -176,7 +176,7 @@ The reset command additionally deletes both local Letta agents, their conversati
 
 - A2A 1.0 JSON-RPC is the tested client-facing target. The backends retain a 0.3 compatibility interface for broader client compatibility; agentgateway v1.5.0 does not itself parse or enforce `A2A-Version` or prove complete 1.0 conformance.
 - Text input and text artifacts are implemented first.
-- Both agent implementations advertise A2A streaming over SSE. The bridge publishes only top-level Letta assistant text as ordered artifact chunks; reasoning, tool, command, subagent, and unknown runtime events remain private.
+- Both agent implementations advertise A2A streaming over SSE. While a Letta turn runs, the bridge streams coarse progress as working-status updates (thinking, using a tool, retrying, writing), then publishes the top-level assistant text once as a single artifact. Reasoning text, tool names and arguments, command, subagent, and unknown runtime events remain private.
 - Both agent implementations advertise push notifications, and the demonstrated registration and delivery flow uses A2A 1.0. Registration accepts only the exact configured lab callback and Bearer credential; callbacks are best effort, in memory, redirect-free, and duplicate-safe for identical payloads at the receiver. `GetTask` remains authoritative.
 - The default task profile is in-memory. The optional bridge durable profile preserves historical `GetTask`, owner-scoped conversation mapping, deduplication, and unresolved fences through restart. The reference agent intentionally remains volatile.
 - Signed Agent Cards and production multi-tenant caller identity are deferred. Binary file transfer is deliberately out of scope for this reference repository.

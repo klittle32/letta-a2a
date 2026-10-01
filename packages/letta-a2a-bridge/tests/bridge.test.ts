@@ -332,71 +332,45 @@ describe("extracted bridge", () => {
     expect(result.complete).toBe(false);
     expect(result.unresolvedContextIds).toEqual(["context"]);
   });
-  test("successful streams maintain artifact identity and final chunk boundaries", async () => {
+  test("streams report progress as status updates, then the answer once", async () => {
     const bridge = createBridge({
       ...options,
       runner: {
         async runTurn(r) {
-          // Pieces arriving together share a batch; the newest piece is held
-          // back so the final delta can carry lastChunk.
+          r.onProgress?.("thinking");
+          r.onProgress?.("thinking");
           r.onAssistantText("one");
           r.onAssistantText("two");
-          await new Promise((resolve) => setTimeout(resolve, 150));
+          r.onProgress?.("tool");
           r.onAssistantText("three");
-          await new Promise((resolve) => setTimeout(resolve, 150));
-          r.onAssistantText("four");
-          return { text: "onetwothreefour" };
+          return { text: "onetwothree" };
         },
       },
     });
-    const artifacts = [];
-    let taskId = "";
-    for await (const event of bridge.requestHandler.sendMessageStream(
-      request(),
-      callContext,
-    )) {
-      if (event.payload?.$case === "task") taskId = event.payload.value.id;
-      if (event.payload?.$case === "artifactUpdate")
-        artifacts.push(event.payload.value);
-    }
-    expect(artifacts.map((a) => [a.append, a.lastChunk, partsText(a.artifact)])).toEqual([
-      [false, false, "one"],
-      [true, false, "two"],
-      [true, true, "threefour"],
-    ]);
-    expect(new Set(artifacts.map((a) => a.artifact?.artifactId)).size).toBe(1);
-    // Readers of the stored task get whole text, not one part per delta.
-    const readback = await bridge.requestHandler.getTask(
-      GetTaskRequest.fromJSON({ id: taskId, historyLength: 0 }),
-      callContext,
-    );
-    expect(readback.artifacts.map((a) => a.parts)).toEqual([
-      [textPart("onetwothreefour")],
-    ]);
-    await bridge.close();
-  });
-  test("a full batch closes without waiting for the timer", async () => {
-    const bridge = createBridge({
-      ...options,
-      runner: {
-        async runTurn(r) {
-          for (let i = 0; i < 450; i++) r.onAssistantText("x");
-          return { text: "x".repeat(450) };
-        },
-      },
-    });
+    const progress: string[] = [];
     const artifacts = [];
     for await (const event of bridge.requestHandler.sendMessageStream(
       request(),
       callContext,
     )) {
+      if (event.payload?.$case === "statusUpdate") {
+        const status = event.payload.value.status;
+        if (status?.state === TaskState.TASK_STATE_WORKING && status.message)
+          progress.push(readText(status.message));
+      }
       if (event.payload?.$case === "artifactUpdate")
         artifacts.push(event.payload.value);
     }
+    // One update per phase change; repeated phases stay quiet.
+    expect(progress).toEqual([
+      "Thinking...",
+      "Writing the answer...",
+      "Using a tool...",
+      "Writing the answer...",
+    ]);
+    // No token-sized deltas: one artifact event carries the whole answer.
     expect(artifacts.map((a) => [a.append, a.lastChunk, partsText(a.artifact)])).toEqual([
-      [false, false, "x".repeat(199)],
-      [true, false, "x".repeat(199)],
-      [true, true, "x".repeat(52)],
+      [false, true, "onetwothree"],
     ]);
     await bridge.close();
   });
