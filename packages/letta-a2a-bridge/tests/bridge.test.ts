@@ -111,6 +111,11 @@ function message(contextId = ""): Message {
     metadata: undefined,
   };
 }
+function partsText(artifact: { parts: { content?: { $case: string; value?: unknown } }[] } | undefined): string {
+  return (artifact?.parts ?? [])
+    .map((p) => (p.content?.$case === "text" ? String(p.content.value) : ""))
+    .join("");
+}
 const options = {
   sharingDomain: "test",
   publicBaseUrl: "http://127.0.0.1:9999",
@@ -332,13 +337,15 @@ describe("extracted bridge", () => {
       ...options,
       runner: {
         async runTurn(r) {
-          // Tokens arriving together share one delta once the batch timer fires.
+          // Pieces arriving together share a batch; the newest piece is held
+          // back so the final delta can carry lastChunk.
           r.onAssistantText("one");
           r.onAssistantText("two");
           await new Promise((resolve) => setTimeout(resolve, 150));
-          // Still buffered at the end of the turn: carried by the replacement.
           r.onAssistantText("three");
-          return { text: "onetwothree" };
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          r.onAssistantText("four");
+          return { text: "onetwothreefour" };
         },
       },
     });
@@ -352,35 +359,29 @@ describe("extracted bridge", () => {
       if (event.payload?.$case === "artifactUpdate")
         artifacts.push(event.payload.value);
     }
-    // Live delta first, then one final replacement carrying the whole answer.
-    expect(artifacts.map((a) => [a.append, a.lastChunk])).toEqual([
-      [false, false],
-      [false, true],
+    expect(artifacts.map((a) => [a.append, a.lastChunk, partsText(a.artifact)])).toEqual([
+      [false, false, "one"],
+      [true, false, "two"],
+      [true, true, "threefour"],
     ]);
-    assert(artifacts[0].artifact);
-    assert(artifacts[1].artifact);
-    expect(artifacts[0].artifact.artifactId).toBe(
-      artifacts[1].artifact.artifactId,
-    );
-    expect(artifacts[0].artifact.parts).toEqual([textPart("onetwo")]);
-    expect(artifacts[1].artifact.parts).toEqual([textPart("onetwothree")]);
-    // The stored task holds one part, not one part per streamed token.
+    expect(new Set(artifacts.map((a) => a.artifact?.artifactId)).size).toBe(1);
+    // Readers of the stored task get whole text, not one part per delta.
     const readback = await bridge.requestHandler.getTask(
       GetTaskRequest.fromJSON({ id: taskId, historyLength: 0 }),
       callContext,
     );
     expect(readback.artifacts.map((a) => a.parts)).toEqual([
-      [textPart("onetwothree")],
+      [textPart("onetwothreefour")],
     ]);
     await bridge.close();
   });
-  test("a full batch flushes immediately without waiting for the timer", async () => {
+  test("a full batch closes without waiting for the timer", async () => {
     const bridge = createBridge({
       ...options,
       runner: {
         async runTurn(r) {
-          for (let i = 0; i < 250; i++) r.onAssistantText("x");
-          return { text: "x".repeat(250) };
+          for (let i = 0; i < 450; i++) r.onAssistantText("x");
+          return { text: "x".repeat(450) };
         },
       },
     });
@@ -392,18 +393,26 @@ describe("extracted bridge", () => {
       if (event.payload?.$case === "artifactUpdate")
         artifacts.push(event.payload.value);
     }
-    expect(
-      artifacts.map((a) => [
-        a.append,
-        a.lastChunk,
-        a.artifact?.parts
-          .map((p) => (p.content?.$case === "text" ? p.content.value : ""))
-          .join(""),
-      ]),
-    ).toEqual([
-      [false, false, "x".repeat(200)],
-      [false, true, "x".repeat(250)],
+    expect(artifacts.map((a) => [a.append, a.lastChunk, partsText(a.artifact)])).toEqual([
+      [false, false, "x".repeat(199)],
+      [true, false, "x".repeat(199)],
+      [true, true, "x".repeat(52)],
     ]);
+    await bridge.close();
+  });
+  test("blocking SendMessage returns the answer as one text part", async () => {
+    const bridge = createBridge({
+      ...options,
+      runner: {
+        async runTurn(r) {
+          for (let i = 0; i < 450; i++) r.onAssistantText("y");
+          return { text: "y".repeat(450) };
+        },
+      },
+    });
+    const result = await bridge.requestHandler.sendMessage(request(), callContext);
+    assert("artifacts" in result);
+    expect(result.artifacts.map((a) => a.parts)).toEqual([[textPart("y".repeat(450))]]);
     await bridge.close();
   });
   test("anonymous discovery serves security schemes in ProtoJSON form", async () => {

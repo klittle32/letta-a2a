@@ -122,7 +122,7 @@ sudo journalctl -u agentgateway -f | grep 'route=default/scooter' \
 3. Returns session options per turn: `createToolPolicy()` (deny every tool), plus `model` and `reasoningEffort: "high"`.
 4. Mounts `createBridgeRouter` behind the source-VM guard on an Express listener bound to all interfaces, because `listenLoopback` only binds 127.0.0.1.
 
-`LettaAgentExecutor` streams assistant text as artifact deltas batched every 100 ms or 200 characters, then ends each turn with one consolidated part, so `GetTask` returns the whole answer as a single text part.
+`LettaAgentExecutor` streams assistant text as append-only artifact deltas batched every 100 ms or 200 characters. The bridge joins the stored parts on read, so `GetTask` and blocking `SendMessage` return the whole answer as a single text part.
 
 ## Boundaries
 

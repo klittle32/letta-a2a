@@ -362,24 +362,26 @@ export class LettaAgentExecutor implements AgentExecutor {
   }
 }
 
-/** Live deltas flush after this delay or size, whichever comes first. */
+/** Live text is sent after this delay or size, whichever comes first. */
 const STREAM_BATCH_MS = 100;
 const STREAM_BATCH_CHARS = 200;
 
 /**
- * Streams assistant text as ordered artifact deltas, then ends every turn with
- * one consolidated part.
+ * Streams assistant text as ordered append-only artifact deltas.
  *
  * Letta emits text a few characters at a time. Forwarding each piece as its own
  * event floods streaming clients and costs one task-store save per token, so
- * deltas are batched by time and size. The stored answer is always a single
- * part: clients reading the task (GetTask, blocking SendMessage) would
- * otherwise get fragments that some render with separators.
+ * text is batched by time and size. The newest piece is always held back (the
+ * original one-item lookahead) so the final delta can carry lastChunk; at most
+ * one piece waits during a model pause. The deltas concatenate to the full
+ * answer, and read paths join the stored parts (see coalesceTextParts).
  */
 class StreamingTextArtifact {
   readonly artifactId = crypto.randomUUID();
   private readonly chunks: string[] = [];
-  private buffer = "";
+  /** Unsent pieces; the last one is the held-back lookahead. */
+  private unsent: string[] = [];
+  private unsentLength = 0;
   private timer?: ReturnType<typeof setTimeout>;
   private started = false;
   private settled = false;
@@ -391,14 +393,18 @@ class StreamingTextArtifact {
   push(text: string): void {
     if (!text || this.settled) return;
     this.chunks.push(text);
-    this.buffer += text;
-    if (this.buffer.length >= STREAM_BATCH_CHARS) this.flush();
-    else this.timer ??= setTimeout(() => this.flush(), STREAM_BATCH_MS);
+    this.unsent.push(text);
+    this.unsentLength += text.length;
+    if (this.unsentLength >= STREAM_BATCH_CHARS) this.closeBatch();
+    else this.timer ??= setTimeout(() => this.closeBatch(), STREAM_BATCH_MS);
   }
   prepare(fallback: string): void {
-    if (!this.chunks.length && fallback) this.chunks.push(fallback);
+    if (this.chunks.length || !fallback) return;
+    this.chunks.push(fallback);
+    this.unsent = [fallback];
+    this.unsentLength = fallback.length;
   }
-  /** Replaces the streamed deltas with the full text as a single part. */
+  /** Durable journal entry: the full text as a single part. */
   replacement(lastChunk: boolean) {
     if (!this.chunks.length) return undefined;
     return this.update(this.chunks.join(""), false, lastChunk);
@@ -406,27 +412,31 @@ class StreamingTextArtifact {
   finish(): void {
     this.settle(true);
   }
-  /** Failure/cancellation keeps the partial output, consolidated but nonfinal. */
+  /** Failure/cancellation keeps the partial output, nonfinal. */
   stop(): void {
     this.settle(false);
+  }
+  /** Sends everything except the newest piece, which stays as lookahead. */
+  private closeBatch(): void {
+    this.clearTimer();
+    if (this.settled || this.unsent.length < 2) return;
+    const held = this.unsent.pop()!;
+    this.publish(this.unsent.join(""), false);
+    this.unsent = [held];
+    this.unsentLength = held.length;
   }
   private settle(lastChunk: boolean): void {
     if (this.settled) return;
     this.settled = true;
-    // Unsent buffered text is carried by the replacement instead.
     this.clearTimer();
-    this.buffer = "";
-    const replacement = this.replacement(lastChunk);
-    if (!replacement) return;
-    this.started = true;
-    this.eventBus.publish(replacement);
+    const tail = this.unsent.join("");
+    this.unsent = [];
+    this.unsentLength = 0;
+    if (tail) this.publish(tail, lastChunk);
   }
-  private flush(): void {
-    this.clearTimer();
-    if (!this.buffer || this.settled) return;
-    this.eventBus.publish(this.update(this.buffer, this.started, false));
+  private publish(text: string, lastChunk: boolean): void {
+    this.eventBus.publish(this.update(text, this.started, lastChunk));
     this.started = true;
-    this.buffer = "";
   }
   private clearTimer(): void {
     if (this.timer === undefined) return;
