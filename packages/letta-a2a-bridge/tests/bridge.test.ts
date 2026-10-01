@@ -332,9 +332,13 @@ describe("extracted bridge", () => {
       ...options,
       runner: {
         async runTurn(r) {
+          // Tokens arriving together share one delta once the batch timer fires.
           r.onAssistantText("one");
           r.onAssistantText("two");
-          return { text: "onetwo" };
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          // Still buffered at the end of the turn: carried by the replacement.
+          r.onAssistantText("three");
+          return { text: "onetwothree" };
         },
       },
     });
@@ -358,14 +362,47 @@ describe("extracted bridge", () => {
     expect(artifacts[0].artifact.artifactId).toBe(
       artifacts[1].artifact.artifactId,
     );
-    expect(artifacts[1].artifact.parts).toEqual([textPart("onetwo")]);
+    expect(artifacts[0].artifact.parts).toEqual([textPart("onetwo")]);
+    expect(artifacts[1].artifact.parts).toEqual([textPart("onetwothree")]);
     // The stored task holds one part, not one part per streamed token.
     const readback = await bridge.requestHandler.getTask(
       GetTaskRequest.fromJSON({ id: taskId, historyLength: 0 }),
       callContext,
     );
     expect(readback.artifacts.map((a) => a.parts)).toEqual([
-      [textPart("onetwo")],
+      [textPart("onetwothree")],
+    ]);
+    await bridge.close();
+  });
+  test("a full batch flushes immediately without waiting for the timer", async () => {
+    const bridge = createBridge({
+      ...options,
+      runner: {
+        async runTurn(r) {
+          for (let i = 0; i < 250; i++) r.onAssistantText("x");
+          return { text: "x".repeat(250) };
+        },
+      },
+    });
+    const artifacts = [];
+    for await (const event of bridge.requestHandler.sendMessageStream(
+      request(),
+      callContext,
+    )) {
+      if (event.payload?.$case === "artifactUpdate")
+        artifacts.push(event.payload.value);
+    }
+    expect(
+      artifacts.map((a) => [
+        a.append,
+        a.lastChunk,
+        a.artifact?.parts
+          .map((p) => (p.content?.$case === "text" ? p.content.value : ""))
+          .join(""),
+      ]),
+    ).toEqual([
+      [false, false, "x".repeat(200)],
+      [false, true, "x".repeat(250)],
     ]);
     await bridge.close();
   });

@@ -141,7 +141,7 @@ describe("durable executor", () => {
     const chunks = f.events.filter((e) => e.kind === "artifactUpdate");
     expect(
       chunks.map((e) => e.kind === "artifactUpdate" && e.data.append),
-    ).toEqual([false, false]);
+    ).toEqual([false]);
     let closed = false;
     const closing = executor.close().then((result) => {
       closed = true;

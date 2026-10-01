@@ -362,34 +362,41 @@ export class LettaAgentExecutor implements AgentExecutor {
   }
 }
 
+/** Live deltas flush after this delay or size, whichever comes first. */
+const STREAM_BATCH_MS = 100;
+const STREAM_BATCH_CHARS = 200;
+
 /**
  * Streams assistant text as ordered artifact deltas, then ends every turn with
- * one consolidated part. Token-sized chunks are a streaming detail, not separate
- * content: clients reading the stored task (GetTask, blocking SendMessage) would
- * otherwise get the answer split into fragments that some render with separators.
- * One-item lookahead keeps the final delta for the replacement event.
+ * one consolidated part.
+ *
+ * Letta emits text a few characters at a time. Forwarding each piece as its own
+ * event floods streaming clients and costs one task-store save per token, so
+ * deltas are batched by time and size. The stored answer is always a single
+ * part: clients reading the task (GetTask, blocking SendMessage) would
+ * otherwise get fragments that some render with separators.
  */
 class StreamingTextArtifact {
   readonly artifactId = crypto.randomUUID();
   private readonly chunks: string[] = [];
-  private pending?: string;
+  private buffer = "";
+  private timer?: ReturnType<typeof setTimeout>;
   private started = false;
+  private settled = false;
   constructor(
     private readonly eventBus: ExecutionEventBus,
     private readonly taskId: string,
     private readonly contextId: string,
   ) {}
   push(text: string): void {
-    if (!text) return;
-    this.flush();
-    this.pending = text;
+    if (!text || this.settled) return;
     this.chunks.push(text);
+    this.buffer += text;
+    if (this.buffer.length >= STREAM_BATCH_CHARS) this.flush();
+    else this.timer ??= setTimeout(() => this.flush(), STREAM_BATCH_MS);
   }
   prepare(fallback: string): void {
-    if (this.pending === undefined && !this.started && fallback) {
-      this.pending = fallback;
-      this.chunks.push(fallback);
-    }
+    if (!this.chunks.length && fallback) this.chunks.push(fallback);
   }
   /** Replaces the streamed deltas with the full text as a single part. */
   replacement(lastChunk: boolean) {
@@ -404,17 +411,27 @@ class StreamingTextArtifact {
     this.settle(false);
   }
   private settle(lastChunk: boolean): void {
+    if (this.settled) return;
+    this.settled = true;
+    // Unsent buffered text is carried by the replacement instead.
+    this.clearTimer();
+    this.buffer = "";
     const replacement = this.replacement(lastChunk);
     if (!replacement) return;
-    this.pending = undefined;
     this.started = true;
     this.eventBus.publish(replacement);
   }
   private flush(): void {
-    if (this.pending === undefined) return;
-    this.eventBus.publish(this.update(this.pending, this.started, false));
+    this.clearTimer();
+    if (!this.buffer || this.settled) return;
+    this.eventBus.publish(this.update(this.buffer, this.started, false));
     this.started = true;
-    this.pending = undefined;
+    this.buffer = "";
+  }
+  private clearTimer(): void {
+    if (this.timer === undefined) return;
+    clearTimeout(this.timer);
+    this.timer = undefined;
   }
   private update(text: string, append: boolean, lastChunk: boolean) {
     return AgentEvent.artifactUpdate({
