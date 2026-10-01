@@ -55,13 +55,13 @@
     "@a2a-js/sdk": "1.1.0"
   },
   "devDependencies": {
-    "@letta-ai/letta-agent-sdk": "0.8.3",
+    "@letta-ai/letta-agent-sdk": "0.8.27",
     "@types/bun": "1.3.4",
     "@types/node": "24.3.0",
     "typescript": "5.9.2"
   },
   "peerDependencies": {
-    "@letta-ai/letta-agent-sdk": "0.8.3"
+    "@letta-ai/letta-agent-sdk": "0.8.27"
   },
   "peerDependenciesMeta": {
     "@letta-ai/letta-agent-sdk": {
@@ -73,5 +73,9 @@
   ],
   "engines": {
     "node": ">=24.19.0 <25"
+  },
+  "overrides": {
+    "@letta-ai/letta-agent-sdk": "0.8.27",
+    "@letta-ai/letta-code": "0.34.1"
   }
 }

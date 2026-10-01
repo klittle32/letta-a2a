@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@a2a-js/sdk": "1.1.0",
-    "@letta-ai/letta-agent-sdk": "0.8.3",
+    "@letta-ai/letta-agent-sdk": "0.8.27",
     "express": "5.1.0",
     "jose": "6.2.9",
     "letta-a2a-bridge": "file:packages/letta-a2a-bridge",
@@ -36,5 +36,9 @@
   },
   "engines": {
     "node": ">=24.19.0"
+  },
+  "overrides": {
+    "@letta-ai/letta-agent-sdk": "0.8.27",
+    "@letta-ai/letta-code": "0.34.1"
   }
 }

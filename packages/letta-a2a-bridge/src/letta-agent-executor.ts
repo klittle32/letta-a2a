@@ -362,7 +362,13 @@ export class LettaAgentExecutor implements AgentExecutor {
   }
 }
 
-/** One-item lookahead preserves nonfinal partial output on failure/cancellation. */
+/**
+ * Streams assistant text as ordered artifact deltas, then ends every turn with
+ * one consolidated part. Token-sized chunks are a streaming detail, not separate
+ * content: clients reading the stored task (GetTask, blocking SendMessage) would
+ * otherwise get the answer split into fragments that some render with separators.
+ * One-item lookahead keeps the final delta for the replacement event.
+ */
 class StreamingTextArtifact {
   readonly artifactId = crypto.randomUUID();
   private readonly chunks: string[] = [];
@@ -375,7 +381,7 @@ class StreamingTextArtifact {
   ) {}
   push(text: string): void {
     if (!text) return;
-    this.flush(false);
+    this.flush();
     this.pending = text;
     this.chunks.push(text);
   }
@@ -385,8 +391,32 @@ class StreamingTextArtifact {
       this.chunks.push(fallback);
     }
   }
+  /** Replaces the streamed deltas with the full text as a single part. */
   replacement(lastChunk: boolean) {
     if (!this.chunks.length) return undefined;
+    return this.update(this.chunks.join(""), false, lastChunk);
+  }
+  finish(): void {
+    this.settle(true);
+  }
+  /** Failure/cancellation keeps the partial output, consolidated but nonfinal. */
+  stop(): void {
+    this.settle(false);
+  }
+  private settle(lastChunk: boolean): void {
+    const replacement = this.replacement(lastChunk);
+    if (!replacement) return;
+    this.pending = undefined;
+    this.started = true;
+    this.eventBus.publish(replacement);
+  }
+  private flush(): void {
+    if (this.pending === undefined) return;
+    this.eventBus.publish(this.update(this.pending, this.started, false));
+    this.started = true;
+    this.pending = undefined;
+  }
+  private update(text: string, append: boolean, lastChunk: boolean) {
     return AgentEvent.artifactUpdate({
       taskId: this.taskId,
       contextId: this.contextId,
@@ -394,41 +424,13 @@ class StreamingTextArtifact {
         artifactId: this.artifactId,
         name: "Letta response",
         description: "Public assistant text from the Letta turn.",
-        parts: this.chunks.map(textPart),
+        parts: [textPart(text)],
         metadata: undefined,
         extensions: [],
       },
-      append: false,
+      append,
       lastChunk,
       metadata: undefined,
     });
-  }
-  finish(): void {
-    this.flush(true);
-  }
-  stop(): void {
-    this.flush(false);
-  }
-  private flush(lastChunk: boolean): void {
-    if (this.pending === undefined) return;
-    this.eventBus.publish(
-      AgentEvent.artifactUpdate({
-        taskId: this.taskId,
-        contextId: this.contextId,
-        artifact: {
-          artifactId: this.artifactId,
-          name: "Letta response",
-          description: "Public assistant text from the Letta turn.",
-          parts: [textPart(this.pending)],
-          metadata: undefined,
-          extensions: [],
-        },
-        append: this.started,
-        lastChunk,
-        metadata: undefined,
-      }),
-    );
-    this.started = true;
-    this.pending = undefined;
   }
 }

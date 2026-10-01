@@ -339,23 +339,70 @@ describe("extracted bridge", () => {
       },
     });
     const artifacts = [];
+    let taskId = "";
     for await (const event of bridge.requestHandler.sendMessageStream(
       request(),
       callContext,
     )) {
+      if (event.payload?.$case === "task") taskId = event.payload.value.id;
       if (event.payload?.$case === "artifactUpdate")
         artifacts.push(event.payload.value);
     }
+    // Live delta first, then one final replacement carrying the whole answer.
     expect(artifacts.map((a) => [a.append, a.lastChunk])).toEqual([
       [false, false],
-      [true, true],
+      [false, true],
     ]);
     assert(artifacts[0].artifact);
     assert(artifacts[1].artifact);
     expect(artifacts[0].artifact.artifactId).toBe(
       artifacts[1].artifact.artifactId,
     );
+    expect(artifacts[1].artifact.parts).toEqual([textPart("onetwo")]);
+    // The stored task holds one part, not one part per streamed token.
+    const readback = await bridge.requestHandler.getTask(
+      GetTaskRequest.fromJSON({ id: taskId, historyLength: 0 }),
+      callContext,
+    );
+    expect(readback.artifacts.map((a) => a.parts)).toEqual([
+      [textPart("onetwo")],
+    ]);
     await bridge.close();
+  });
+  test("anonymous discovery serves security schemes in ProtoJSON form", async () => {
+    const bridge = createBridge({
+      ...options,
+      security: {
+        securitySchemes: {
+          gatewayApiKey: {
+            scheme: {
+              $case: "apiKeySecurityScheme",
+              value: { description: "", location: "header", name: "X-API-Key" },
+            },
+          },
+        },
+        securityRequirements: [],
+      },
+      runner: {
+        async runTurn() {
+          return { text: "unused" };
+        },
+      },
+    });
+    const listener = await listenLoopback(bridge, { port: 0 });
+    try {
+      const card = (await (
+        await fetch(`${listener.url}/${AGENT_CARD_PATH}`)
+      ).json()) as { securitySchemes?: unknown };
+      expect(card.securitySchemes).toEqual({
+        gatewayApiKey: {
+          apiKeySecurityScheme: { location: "header", name: "X-API-Key" },
+        },
+      });
+      expect(JSON.stringify(card)).not.toContain("$case");
+    } finally {
+      await listener.close();
+    }
   });
   test("official cancellation holds a running SDK turn and aborts queued work on close", async () => {
     const a = new Session("conversation"),

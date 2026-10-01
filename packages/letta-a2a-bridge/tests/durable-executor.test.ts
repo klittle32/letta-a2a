@@ -14,6 +14,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LettaTurnCancelledError } from "../src/letta-agent.js";
+import { textPart } from "../src/a2a-text.js";
 const card = AgentCard.fromJSON({ capabilities: { streaming: true } });
 
 const params = () =>
@@ -132,7 +133,7 @@ describe("durable executor", () => {
     if (replacement.kind === "artifactUpdate") {
       expect(replacement.data.append).toBe(false);
       expect(replacement.data.artifact?.artifactId).toBe(artifactId);
-      expect(replacement.data.artifact?.parts).toHaveLength(2);
+      expect(replacement.data.artifact?.parts).toEqual([textPart("onetwo")]);
     }
     published.resolve();
     await new Promise((r) => setTimeout(r, 0));
@@ -140,7 +141,7 @@ describe("durable executor", () => {
     const chunks = f.events.filter((e) => e.kind === "artifactUpdate");
     expect(
       chunks.map((e) => e.kind === "artifactUpdate" && e.data.append),
-    ).toEqual([false, true]);
+    ).toEqual([false, false]);
     let closed = false;
     const closing = executor.close().then((result) => {
       closed = true;
@@ -282,7 +283,7 @@ describe("durable executor", () => {
         expect((await executor.close()).complete).toBe(true);
         const saved = await durability.taskStore.load(result.id, c);
         expect(saved?.status?.message?.messageId).toBeTruthy();
-        expect(saved?.artifacts?.[0]?.parts).toHaveLength(2);
+        expect(saved?.artifacts?.[0]?.parts).toHaveLength(1);
         expect(durability.unresolvedContexts).toEqual([]);
       } finally {
         await durability.close();

@@ -583,11 +583,12 @@ export function createBridgeRouter(
         res.json(AgentCard.toJSON(card));
         return;
       }
-      return agentCardHandler({ agentCardProvider: async () => card })(
-        req,
-        res,
-        next,
-      );
+      // The SDK handler JSON.stringify()s whatever the provider returns, so hand
+      // it the ProtoJSON wire form. The internal card would leak oneof wrappers
+      // (securitySchemes.*.scheme.$case) that A2A clients reject.
+      return agentCardHandler({
+        agentCardProvider: async () => AgentCard.toJSON(card) as AgentCard,
+      })(req, res, next);
     } catch (error) {
       if (error instanceof BridgeAccessError) {
         res.status(error.statusCode).json({ error: error.message });

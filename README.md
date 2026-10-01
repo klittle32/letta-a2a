@@ -32,9 +32,9 @@ shell-capable agent ──official a2a-cli skill──▶ installed a2a ──�
 
 The seven core services are:
 
-- `agent-a`: Letta Code 0.30.25 App Server with a local backend.
+- `agent-a`: Letta Code 0.34.1 App Server with a local backend.
 - `agent-b`: an independently persisted local Letta backend.
-- `bridge`: composes `letta-a2a-bridge` and `letta-a2a-client` through Letta Agent SDK 0.8.3 and A2A JS SDK 1.1.0. Each agent has an independent authenticated binding and session-owned delegation tools; App Servers remain pinned to 0.30.25, verified by the live matrix.
+- `bridge`: composes `letta-a2a-bridge` and `letta-a2a-client` through Letta Agent SDK 0.8.27 and A2A JS SDK 1.1.0. Each agent has an independent authenticated binding and session-owned delegation tools. App Servers are pinned to 0.34.1, matching the SDK's Code runtime; the provider-free protocol matrix and lab bootstrap pass on these pins, but the live provider matrix was last run on SDK 0.8.3 with Code 0.30.25.
 - `reference-agent`: a non-Letta, non-LLM fixture built with the official Python `a2a-sdk`. Its exact commands exercise echo, ordered streaming, context continuity, failure, delay, and cancellation; one narrow outbound command delegates to Agent A.
 - `auth-server`: a local-only OAuth client-credentials fixture with short-lived RSA-signed JWTs, metadata, and JWKS endpoints.
 - `agentgateway`: one agentgateway v1.5.0 process, pinned by OCI digest, with path-based A2A routes, strict JWT authentication, caller-aware role/scope authorization, Agent Card rewriting, structured A2A logs, and a loopback UI.

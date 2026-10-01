@@ -8,8 +8,8 @@ Implementation baseline for [the package plan](LETTA_A2A_PACKAGES_PLAN.md). This
 | --- | --- | --- |
 | Protocol | A2A `v1.0.0`, commit `173695755607e884aa9acf8ce4feed90e32727a1` | JSON-RPC + SSE; later protocol revisions require an explicit compatibility review |
 | Package A2A SDK | `@a2a-js/sdk` `1.1.0`, upstream tag commit `eeffd69c983b6501cac912c693b69c034977455c` | Already pinned in the client package and Example 14 |
-| Letta Agent SDK | `@letta-ai/letta-agent-sdk` `0.8.3` | Already pinned in Example 14; its local runtime dependency is Letta Code `0.31.7` |
-| Converged Docker lab | A2A JS SDK `1.1.0`; Letta Agent SDK `0.8.3`; App Servers `0.30.25` | Phase 4 proved remote compatibility without upgrading the App Servers; root consumes both packages |
+| Letta Agent SDK | `@letta-ai/letta-agent-sdk` `0.8.27` | Pinned in both packages and Examples 14-15; its local runtime is Letta Code `0.34.1`. `overrides` collapse Letta's chained version pins |
+| Converged Docker lab | A2A JS SDK `1.1.0`; Letta Agent SDK `0.8.27`; App Servers `0.34.1` | Protocol matrix and bootstrap pass on these pins; Phase 4's live remote proof used SDK `0.8.3` with App Servers `0.30.25`; root consumes both packages |
 | Initial local validation | macOS, Node.js `24.19.0`, Bun `1.4.2` | Package engine floor is not evidence of testing every supported version or OS |
 
 Frozen lockfiles remain authoritative for transitive dependencies. New package exports must run under ordinary Node.js, not require Bun at runtime. Broader Node/OS/backend proof belongs to release preparation.
