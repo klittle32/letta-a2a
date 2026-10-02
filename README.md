@@ -32,9 +32,9 @@ shell-capable agent ──official a2a-cli skill──▶ installed a2a ──�
 
 The seven core services are:
 
-- `agent-a`: Letta Code 0.30.25 App Server with a local backend.
+- `agent-a`: Letta Code 0.34.1 App Server with a local backend.
 - `agent-b`: an independently persisted local Letta backend.
-- `bridge`: composes `letta-a2a-bridge` and `letta-a2a-client` through Letta Agent SDK 0.8.3 and A2A JS SDK 1.1.0. Each agent has an independent authenticated binding and session-owned delegation tools; App Servers remain pinned to 0.30.25, verified by the live matrix.
+- `bridge`: composes `letta-a2a-bridge` and `letta-a2a-client` through Letta Agent SDK 0.8.27 and A2A JS SDK 1.1.0. Each agent has an independent authenticated binding and session-owned delegation tools. App Servers are pinned to 0.34.1, matching the SDK's Code runtime; the provider-free protocol matrix and lab bootstrap pass on these pins, but the live provider matrix was last run on SDK 0.8.3 with Code 0.30.25.
 - `reference-agent`: a non-Letta, non-LLM fixture built with the official Python `a2a-sdk`. Its exact commands exercise echo, ordered streaming, context continuity, failure, delay, and cancellation; one narrow outbound command delegates to Agent A.
 - `auth-server`: a local-only OAuth client-credentials fixture with short-lived RSA-signed JWTs, metadata, and JWKS endpoints.
 - `agentgateway`: one agentgateway v1.5.0 process, pinned by OCI digest, with path-based A2A routes, strict JWT authentication, caller-aware role/scope authorization, Agent Card rewriting, structured A2A logs, and a loopback UI.
@@ -96,8 +96,9 @@ Follow the numbered learning path in [`examples/`](examples/README.md). The read
 - `12` — [Hermes TUI to Google ADK](examples/12-hermes-tui-to-google-adk/)
 - `13` — [Portable A2A CLI skill](examples/13-a2a-cli-skill/)
 - `14` — [TypeScript A2A server to Letta Agent SDK](examples/14-typescript-letta-agent-sdk/)
+- `15` — [Letta agent on exe.dev behind agentgateway](examples/15-letta-agent-on-exe-dev/)
 
-Implemented examples are complete through Example 14. Examples 06–08 retain exact historical checkpoints because later stages intentionally replaced their security policy. Polling walkthroughs reuse `scripts/smoke-a2a.mjs`, streaming uses `curl -N` and the integration client's SSE parser, and Example 12 adds a separate profile-gated ADK/Hermes path. Example 14 is a standalone local TypeScript package and does not use the Docker lab.
+Implemented examples are complete through Example 15. Examples 06–08 retain exact historical checkpoints because later stages intentionally replaced their security policy. Polling walkthroughs reuse `scripts/smoke-a2a.mjs`, streaming uses `curl -N` and the integration client's SSE parser, and Example 12 adds a separate profile-gated ADK/Hermes path. Example 14 is a standalone local TypeScript package and does not use the Docker lab.
 
 ## Development checks
 
@@ -119,7 +120,7 @@ bun run test:compose
 
 Build both packages before installing root or Example 14 local file dependencies. After rebuilding them, refresh installed copies with `bun install --frozen-lockfile --force` in the root and example. The Docker build performs these steps inside the image using Bun 1.4.2; it does not depend on host build output. The bridge's `check` includes source and test type-checking; root `bun test` discovers the lab, package, and example tests.
 
-Unit tests cover configuration and gateway-route validation, OAuth issuance and token caching, protocol text mapping, safe Letta stream projection, ordered artifact publication, push registration and delivery policy, duplicate-safe callback receipt, durable A2A-context mappings, Agent Card construction, delegation hop policy, both outbound A2A client paths, and the reference agent's deterministic command surface.
+Unit tests cover configuration and gateway-route validation, OAuth issuance and token caching, protocol text mapping, safe Letta stream projection, progress status and single-artifact publication, push registration and delivery policy, duplicate-safe callback receipt, durable A2A-context mappings, Agent Card construction, delegation hop policy, both outbound A2A client paths, and the reference agent's deterministic command surface.
 
 Run the deterministic protocol matrix without calling a model provider:
 
@@ -175,7 +176,7 @@ The reset command additionally deletes both local Letta agents, their conversati
 
 - A2A 1.0 JSON-RPC is the tested client-facing target. The backends retain a 0.3 compatibility interface for broader client compatibility; agentgateway v1.5.0 does not itself parse or enforce `A2A-Version` or prove complete 1.0 conformance.
 - Text input and text artifacts are implemented first.
-- Both agent implementations advertise A2A streaming over SSE. The bridge publishes only top-level Letta assistant text as ordered artifact chunks; reasoning, tool, command, subagent, and unknown runtime events remain private.
+- Both agent implementations advertise A2A streaming over SSE. While a Letta turn runs, the bridge streams coarse progress as working-status updates (thinking, using a tool, retrying, writing), then publishes the top-level assistant text once as a single artifact. Reasoning text, tool names and arguments, command, subagent, and unknown runtime events remain private.
 - Both agent implementations advertise push notifications, and the demonstrated registration and delivery flow uses A2A 1.0. Registration accepts only the exact configured lab callback and Bearer credential; callbacks are best effort, in memory, redirect-free, and duplicate-safe for identical payloads at the receiver. `GetTask` remains authoritative.
 - The default task profile is in-memory. The optional bridge durable profile preserves historical `GetTask`, owner-scoped conversation mapping, deduplication, and unresolved fences through restart. The reference agent intentionally remains volatile.
 - Signed Agent Cards and production multi-tenant caller identity are deferred. Binary file transfer is deliberately out of scope for this reference repository.

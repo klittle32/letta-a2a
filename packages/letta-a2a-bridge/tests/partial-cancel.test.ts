@@ -5,7 +5,7 @@ import {
   type StreamResponse,
 } from "@a2a-js/sdk";
 import { ServerCallContext } from "@a2a-js/sdk/server";
-import { createBridge, LettaTurnCancelledError } from "../src/index.js";
+import { createBridge, LettaTurnCancelledError, readText } from "../src/index.js";
 
 test("canceled streaming output never marks a partial artifact final", async () => {
   const bridge = createBridge({
@@ -50,7 +50,13 @@ test("canceled streaming output never marks a partial artifact final", async () 
     const drain = (async () => {
       for await (const event of stream) {
         events.push(event);
-        if (event.payload?.$case === "artifactUpdate") partial();
+        const status =
+          event.payload?.$case === "statusUpdate"
+            ? event.payload.value.status
+            : undefined;
+        // Text is no longer streamed; progress shows the turn is writing.
+        if (status?.message && readText(status.message) === "Writing the answer...")
+          partial();
       }
     })();
     await ready;

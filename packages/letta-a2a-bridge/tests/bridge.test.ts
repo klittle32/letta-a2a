@@ -111,6 +111,11 @@ function message(contextId = ""): Message {
     metadata: undefined,
   };
 }
+function partsText(artifact: { parts: { content?: { $case: string; value?: unknown } }[] } | undefined): string {
+  return (artifact?.parts ?? [])
+    .map((p) => (p.content?.$case === "text" ? String(p.content.value) : ""))
+    .join("");
+}
 const options = {
   sharingDomain: "test",
   publicBaseUrl: "http://127.0.0.1:9999",
@@ -327,35 +332,97 @@ describe("extracted bridge", () => {
     expect(result.complete).toBe(false);
     expect(result.unresolvedContextIds).toEqual(["context"]);
   });
-  test("successful streams maintain artifact identity and final chunk boundaries", async () => {
+  test("streams report progress as status updates, then the answer once", async () => {
     const bridge = createBridge({
       ...options,
       runner: {
         async runTurn(r) {
+          r.onProgress?.("thinking");
+          r.onProgress?.("thinking");
           r.onAssistantText("one");
           r.onAssistantText("two");
-          return { text: "onetwo" };
+          r.onProgress?.("tool");
+          r.onAssistantText("three");
+          return { text: "onetwothree" };
         },
       },
     });
+    const progress: string[] = [];
     const artifacts = [];
     for await (const event of bridge.requestHandler.sendMessageStream(
       request(),
       callContext,
     )) {
+      if (event.payload?.$case === "statusUpdate") {
+        const status = event.payload.value.status;
+        if (status?.state === TaskState.TASK_STATE_WORKING && status.message)
+          progress.push(readText(status.message));
+      }
       if (event.payload?.$case === "artifactUpdate")
         artifacts.push(event.payload.value);
     }
-    expect(artifacts.map((a) => [a.append, a.lastChunk])).toEqual([
-      [false, false],
-      [true, true],
+    // One update per phase change; repeated phases stay quiet.
+    expect(progress).toEqual([
+      "Thinking...",
+      "Writing the answer...",
+      "Using a tool...",
+      "Writing the answer...",
     ]);
-    assert(artifacts[0].artifact);
-    assert(artifacts[1].artifact);
-    expect(artifacts[0].artifact.artifactId).toBe(
-      artifacts[1].artifact.artifactId,
-    );
+    // No token-sized deltas: one artifact event carries the whole answer.
+    expect(artifacts.map((a) => [a.append, a.lastChunk, partsText(a.artifact)])).toEqual([
+      [false, true, "onetwothree"],
+    ]);
     await bridge.close();
+  });
+  test("blocking SendMessage returns the answer as one text part", async () => {
+    const bridge = createBridge({
+      ...options,
+      runner: {
+        async runTurn(r) {
+          for (let i = 0; i < 450; i++) r.onAssistantText("y");
+          return { text: "y".repeat(450) };
+        },
+      },
+    });
+    const result = await bridge.requestHandler.sendMessage(request(), callContext);
+    assert("artifacts" in result);
+    expect(result.artifacts.map((a) => a.parts)).toEqual([[textPart("y".repeat(450))]]);
+    await bridge.close();
+  });
+  test("anonymous discovery serves security schemes in ProtoJSON form", async () => {
+    const bridge = createBridge({
+      ...options,
+      security: {
+        securitySchemes: {
+          gatewayApiKey: {
+            scheme: {
+              $case: "apiKeySecurityScheme",
+              value: { description: "", location: "header", name: "X-API-Key" },
+            },
+          },
+        },
+        securityRequirements: [],
+      },
+      runner: {
+        async runTurn() {
+          return { text: "unused" };
+        },
+      },
+    });
+    const listener = await listenLoopback(bridge, { port: 0 });
+    try {
+      const card = (await (
+        await fetch(`${listener.url}/${AGENT_CARD_PATH}`)
+      ).json()) as { securitySchemes?: unknown };
+      expect(card.securitySchemes).toEqual({
+        gatewayApiKey: {
+          apiKeySecurityScheme: { location: "header", name: "X-API-Key" },
+        },
+      });
+      expect(JSON.stringify(card)).not.toContain("$case");
+    } finally {
+      await listener.close();
+    }
   });
   test("official cancellation holds a running SDK turn and aborts queued work on close", async () => {
     const a = new Session("conversation"),

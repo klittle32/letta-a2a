@@ -1,5 +1,5 @@
 // Manual, billable proof: OPENAI_API_KEY=... node scripts/phase3-live.mjs --run
-// Build the bridge first. Node 24 / SDK 0.8.3 / Code 0.31.7; no Bun runtime.
+// Build the bridge first. Node 24 / SDK 0.8.27 / Code 0.34.1; no Bun runtime.
 // Only a fresh temporary local backend is permitted. This is NOT a JWT/HTTP proof.
 import assert from "node:assert/strict";
 import {
@@ -163,8 +163,8 @@ async function worker() {
     );
     const scopedRequire = createRequire(new URL("package.json", packageRoot));
     for (const [name, version] of [
-      ["letta-agent-sdk", "0.8.3"],
-      ["letta-code", "0.31.7"],
+      ["letta-agent-sdk", "0.8.27"],
+      ["letta-code", "0.34.1"],
     ]) {
       const manifest = JSON.parse(
         await readFile(
@@ -447,8 +447,8 @@ async function worker() {
         JSON.stringify({
           success: true,
           node: process.version,
-          sdk: "0.8.3",
-          code: "0.31.7",
+          sdk: "0.8.27",
+          code: "0.34.1",
           model,
           turns: 3,
           guards,

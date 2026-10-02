@@ -8,7 +8,7 @@ The established unscoped names returned npm registry 404 on 2026-09-11. This is 
 
 ## Versions and supported configurations
 
-The prerelease baseline pins A2A JS SDK **1.1.0**, Letta Agent SDK **0.8.3**, Letta Code App Server **0.30.25**, Node **24.19.0**, and build-time Bun **1.4.2**. Exact dependencies and frozen lockfiles govern repository verification. Downstream transitive dependency resolution can differ; clean tarball tests exercise that actual installation boundary.
+The prerelease baseline pins A2A JS SDK **1.1.0**, Letta Agent SDK **0.8.27**, Letta Code App Server **0.34.1** (live provider matrix last run on SDK 0.8.3 with Code 0.30.25; re-run before release), Node **24.19.0**, and build-time Bun **1.4.2**. Exact dependencies and frozen lockfiles govern repository verification. Downstream transitive dependency resolution can differ; clean tarball tests exercise that actual installation boundary.
 
 Node engine admission is `>=24.19.0 <25`, narrowed from the earlier unverified Node 22 declaration. This is not certification of every future Node 24 patch. Bun is a build/test tool, not a library runtime dependency. Client core consumers need no Letta SDK; the optional `./agent-sdk` adapter's types require SDK 0.8.3. Bridge consumers receive SDK 0.8.3 and the Express types exposed by its public declarations.
 

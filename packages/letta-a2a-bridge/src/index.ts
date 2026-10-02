@@ -15,6 +15,7 @@ export {
 export {
   AgentSdkTurnRunner,
   LettaTurnCancelledError,
+  type LettaTurnPhase,
   type LettaTurnRequest,
   type LettaTurnResult,
   type LettaTurnRunner,

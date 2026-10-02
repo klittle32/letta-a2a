@@ -21,7 +21,7 @@ import {
   BridgeAccessError,
   type BridgeAuthorization,
 } from "./request-policy.js";
-import { readText } from "./a2a-text.js";
+import { coalesceTextParts, readText } from "./a2a-text.js";
 import {
   DefaultRequestHandler,
   InMemoryTaskStore,
@@ -300,14 +300,15 @@ class BridgeRequestHandler implements A2ARequestHandler {
   async getTask(p: Params<"getTask">, c: ServerCallContext) {
     const scoped = await this.policy.context("getTask", p, c);
     validateHistory(p);
-    return this.sdk.getTask(p, scoped);
+    return coalesceTextParts(await this.sdk.getTask(p, scoped));
   }
   async listTasks(p: Params<"listTasks">, c: ServerCallContext) {
     const scoped = await this.policy.context("listTasks", p, c);
     validateHistory(p);
     if (p.pageSize !== undefined && !Number.isInteger(p.pageSize))
       throw new RequestMalformedError("pageSize must be an integer");
-    return this.sdk.listTasks(p, scoped);
+    const page = await this.sdk.listTasks(p, scoped);
+    return { ...page, tasks: page.tasks.map(coalesceTextParts) };
   }
   async cancelTask(p: Params<"cancelTask">, c: ServerCallContext) {
     const done = this.enter();
@@ -347,16 +348,24 @@ class BridgeRequestHandler implements A2ARequestHandler {
         throw new UnsupportedOperationError(
           "Task execution requires reconciliation",
         );
-      return await this.sdk.cancelTask(p, scoped);
+      return coalesceTextParts(await this.sdk.cancelTask(p, scoped));
     } finally {
       this.cancellations.delete(p.id);
     }
   }
   async *resubscribe(p: Params<"resubscribe">, c: ServerCallContext) {
-    yield* this.sdk.resubscribe(
+    for await (const event of this.sdk.resubscribe(
       p,
       await this.policy.context("resubscribe", p, c),
-    );
+    )) {
+      // The opening snapshot is stored state; later deltas still append to it.
+      if (event.payload?.$case === "task")
+        yield {
+          ...event,
+          payload: { ...event.payload, value: coalesceTextParts(event.payload.value) },
+        };
+      else yield event;
+    }
   }
   async createTaskPushNotificationConfig(
     p: Params<"createTaskPushNotificationConfig">,
@@ -413,7 +422,8 @@ class BridgeRequestHandler implements A2ARequestHandler {
     const release = await this.reserve(p, scoped);
     try {
       this.assertOpen();
-      return await this.sdk.sendMessage(p, scoped);
+      const result = await this.sdk.sendMessage(p, scoped);
+      return "artifacts" in result ? coalesceTextParts(result) : result;
     } finally {
       release();
     }
@@ -583,11 +593,12 @@ export function createBridgeRouter(
         res.json(AgentCard.toJSON(card));
         return;
       }
-      return agentCardHandler({ agentCardProvider: async () => card })(
-        req,
-        res,
-        next,
-      );
+      // The SDK handler JSON.stringify()s whatever the provider returns, so hand
+      // it the ProtoJSON wire form. The internal card would leak oneof wrappers
+      // (securitySchemes.*.scheme.$case) that A2A clients reject.
+      return agentCardHandler({
+        agentCardProvider: async () => AgentCard.toJSON(card) as AgentCard,
+      })(req, res, next);
     } catch (error) {
       if (error instanceof BridgeAccessError) {
         res.status(error.statusCode).json({ error: error.message });
